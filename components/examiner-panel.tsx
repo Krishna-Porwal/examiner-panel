@@ -45,8 +45,8 @@ function Stat({ label, value, icon: Icon }: { label: string; value: number | str
   return <div className="rounded-lg border bg-card p-4"><Icon className="mb-2 size-5" /><div className="text-2xl font-semibold">{value}</div><div className="text-sm text-muted-foreground">{label}</div></div>
 }
 
-function FacultyListTable({ fac, q, setQ, onSel, onExp, onAdd, onCreateCredential, canCreateCredential }: any) {
-  return <div className="rounded-lg border bg-card"><div className="border-b p-4 flex gap-2"><input placeholder="Search..." value={q} onChange={e => setQ(e.target.value)} className="flex-1 rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /><Button variant="outline" size="sm" onClick={onExp}><Download className="size-4" />CSV</Button><Button size="sm" onClick={onAdd}><Plus className="size-4" />Add</Button>{canCreateCredential && <Button variant="outline" size="sm" onClick={onCreateCredential}>Create Credential</Button>}</div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-muted"><th className="p-2 text-left text-foreground">Name</th><th className="p-2 text-left text-foreground">PAN</th><th className="p-2 text-left text-foreground">Institute</th><th className="p-2 text-right text-foreground">Action</th></tr></thead><tbody>{fac.map((f: Faculty) => <tr key={f.PAN} className="border-b"><td className="p-2 text-foreground">{f.faculty_name}</td><td className="p-2 font-mono text-xs text-foreground">{f.PAN}</td><td className="p-2 text-foreground">{f.inst_short_name}</td><td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => onSel(f)}>View</Button></td></tr>)}</tbody></table></div></div>
+function FacultyListTable({ fac, q, setQ, onSel, onExp, onAdd, onCreateCredential, canCreateCredential, canDelete, onDelete }: any) {
+  return <div className="rounded-lg border bg-card"><div className="border-b p-4 flex gap-2"><input placeholder="Search..." value={q} onChange={e => setQ(e.target.value)} className="flex-1 rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /><Button variant="outline" size="sm" onClick={onExp}><Download className="size-4" />CSV</Button><Button size="sm" onClick={onAdd}><Plus className="size-4" />Add</Button>{canCreateCredential && <Button variant="outline" size="sm" onClick={onCreateCredential}>Create Credential</Button>}</div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-muted"><th className="p-2 text-left text-foreground">Name</th><th className="p-2 text-left text-foreground">PAN</th><th className="p-2 text-left text-foreground">Institute</th><th className="p-2 text-right text-foreground">Action</th></tr></thead><tbody>{fac.map((f: Faculty) => <tr key={f.PAN} className="border-b"><td className="p-2 text-foreground">{f.faculty_name}</td><td className="p-2 font-mono text-xs text-foreground">{f.PAN}</td><td className="p-2 text-foreground">{f.inst_short_name}</td><td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => onSel(f)}>View</Button>{canDelete && <Button size="sm" variant="outline" className="ml-2 text-red-600" onClick={() => onDelete(f.PAN)}>Delete</Button>}</td></tr>)}</tbody></table></div></div>
 }
 
 function FacultyDialog({ fac, onClose, onEdit }: any) {
@@ -559,6 +559,38 @@ export default function ExaminerPanel() {
     }
   }
 
+  async function deleteFaculty(pan: string) {
+    if (!window.confirm(`Delete faculty ${pan}? This action cannot be undone.`)) return
+    setBusy(true)
+    setError('')
+    try {
+      await request(`/api/faculty/${encodeURIComponent(pan)}`, { method: 'DELETE' })
+      setFaculty(rows => rows.filter(row => row.PAN !== pan))
+      setNotice('Faculty deleted.')
+      await loadData()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to delete faculty')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteInstitute(instShortName: string) {
+    if (!window.confirm(`Delete institute ${instShortName}? This action cannot be undone.`)) return
+    setBusy(true)
+    setError('')
+    try {
+      await request(`/api/institutes/${encodeURIComponent(instShortName)}`, { method: 'DELETE' })
+      setInstitutes(rows => rows.filter(row => row.inst_short_name !== instShortName))
+      setNotice('Institute deleted.')
+      await loadData()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to delete institute')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   function signOut() {
     sessionStorage.clear()
     setSession(null)
@@ -790,7 +822,7 @@ export default function ExaminerPanel() {
 
               {active === 'Faculty' && (
                 <div className="space-y-4">
-                  <FacultyListTable fac={filtered} q={query} setQ={setQuery} onSel={setSelected} onExp={() => window.open(`${API}/api/faculty-export?token=${sessionToken()}`, '_blank')} onAdd={() => setEditing({ PAN: '', inst_short_name: session.institute ?? '' })} onCreateCredential={() => {}} canCreateCredential={false} />
+                  <FacultyListTable fac={filtered} q={query} setQ={setQuery} onSel={setSelected} onExp={() => window.open(`${API}/api/faculty-export?token=${sessionToken()}`, '_blank')} onAdd={() => setEditing({ PAN: '', inst_short_name: session.institute ?? '' })} onCreateCredential={() => {}} canCreateCredential={false} canDelete={session?.role === 'CE'} onDelete={deleteFaculty} />
 
                   <div className="rounded-lg border bg-card p-4">
                     <h3 className="mb-3 text-lg font-semibold text-foreground">Create Faculty Credential</h3>
@@ -841,6 +873,7 @@ export default function ExaminerPanel() {
                           <div className="flex gap-2">
                             <Button variant="outline" size="sm" onClick={() => setEditingInst(i)}>Edit</Button>
                             <Button variant="outline" size="sm" onClick={() => setCaCredential({ ...caCredential, user_name: i.inst_short_name })}>CA Credential</Button>
+                            {session?.role === 'CE' && <Button variant="outline" size="sm" className="text-red-600" onClick={() => deleteInstitute(i.inst_short_name)}>Delete</Button>}
                           </div>
                         </div>
                       ))}
