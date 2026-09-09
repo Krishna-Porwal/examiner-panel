@@ -1,0 +1,137 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Institute {
+  inst_short_name   String       @id @db.VarChar(10)
+  inst_full_name    String?      @db.VarChar(100)
+  inst_Address1     String?      @db.VarChar(100)
+  inst_Address2     String?      @db.VarChar(100)
+  inst_District     String?      @db.VarChar(50)
+  inst_State        String?      @db.VarChar(50)
+  Landline_PhoneNo  String?      @db.VarChar(20)
+  Director_Name     String?      @db.VarChar(50)
+  Director_Desig    String?      @db.VarChar(25)
+  Director_Email    String?      @db.VarChar(50)
+  Director_MobileNo String?      @db.VarChar(10)
+  ExamHead_Name     String?      @db.VarChar(50)
+  ExamHead_Desig    String?      @db.VarChar(25)
+  ExamHead_Email    String?      @db.VarChar(50)
+  ExamHead_MobileNo String?      @db.VarChar(10)
+  courses           InstCourse[]
+  faculty           Faculty[]
+
+  @@map("institute")
+}
+
+model User {
+  user_name String @db.VarChar(10)
+  role      String @db.VarChar(5)
+  password  String @db.VarChar(255)
+
+  @@id([user_name, role])
+  @@map("user")
+}
+
+model Course {
+  course_code       String          @id @db.VarChar(3)
+  course_short_name String?         @db.VarChar(10)
+  course_full_name  String?         @db.VarChar(100)
+  institutes        InstCourse[]
+  subjects          CourseSubject[]
+
+  @@map("course")
+}
+
+model Specialization {
+  spec_id   Int           @id @db.TinyInt
+  spec_name String?       @db.VarChar(30)
+  subjects  Subject[]
+  faculty   FacultySpec[]
+
+  @@map("specialization")
+}
+
+model Subject {
+  subject_code       String           @id @db.VarChar(10)
+  sub_subject_codes  String?          @db.VarChar(100)
+  subject_short_name String?          @db.VarChar(10)
+  subject_full_name  String?          @db.VarChar(100)
+  semester           Int?             @db.TinyInt
+  spec_id            Int?              @db.TinyInt
+  specialization     Specialization?  @relation(fields: [spec_id], references: [spec_id])
+  courses            CourseSubject[]
+  faculty            FacultySubject[]
+
+  @@map("subject")
+}
+
+model InstCourse {
+  inst_short_name String    @db.VarChar(10)
+  course_code     String    @db.VarChar(3)
+  intake          Int?      @db.SmallInt
+  strength        Int?      @db.SmallInt
+  institute       Institute @relation(fields: [inst_short_name], references: [inst_short_name])
+  course          Course    @relation(fields: [course_code], references: [course_code])
+
+  @@id([inst_short_name, course_code])
+  @@map("inst_course")
+}
+
+model CourseSubject {
+  course_code  String  @db.VarChar(3)
+  subject_code String  @db.VarChar(10)
+  course       Course  @relation(fields: [course_code], references: [course_code])
+  subject      Subject @relation(fields: [subject_code], references: [subject_code])
+
+  @@id([course_code, subject_code])
+  @@map("course_subject")
+}
+
+model Faculty {
+  PAN               String           @id @db.VarChar(10)
+  Title             String?          @db.VarChar(10)
+  faculty_name      String?          @db.VarChar(50)
+  inst_short_name   String?          @db.VarChar(10)
+  faculty_desig     String?          @db.VarChar(25)
+  faculty_total_exp Int?             @db.SmallInt
+  faculty_address   String?          @db.VarChar(100)
+  faculty_Email     String?          @db.VarChar(50)
+  faculty_MobileNo  String?          @db.VarChar(10)
+  entered_by        String?          @db.VarChar(10)
+  entered_on        DateTime?
+  institute         Institute?       @relation(fields: [inst_short_name], references: [inst_short_name])
+  subjects          FacultySubject[]
+  specializations   FacultySpec[]
+
+  @@map("faculty")
+}
+
+model FacultySubject {
+  PAN          String    @db.VarChar(10)
+  subject_code String    @db.VarChar(10)
+  entered_by   String?   @db.VarChar(10)
+  entered_on   DateTime?
+  faculty      Faculty   @relation(fields: [PAN], references: [PAN])
+  subject      Subject   @relation(fields: [subject_code], references: [subject_code])
+
+  @@id([PAN, subject_code])
+  @@map("faculty_subject")
+}
+
+model FacultySpec {
+  PAN            String         @db.VarChar(10)
+  spec_id        Int            @db.TinyInt
+  entered_by     String?        @db.VarChar(10)
+  entered_on     DateTime?
+  faculty        Faculty        @relation(fields: [PAN], references: [PAN])
+  specialization Specialization @relation(fields: [spec_id], references: [spec_id])
+
+  @@id([PAN, spec_id])
+  @@map("faculty_spec")
+}
