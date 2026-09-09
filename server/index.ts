@@ -27,6 +27,20 @@ function allow(...roles: Role[]) { return (req: AuthedRequest, res: Response, ne
 function facultyScope(req: AuthedRequest) { if (req.session?.role === 'FAC') return { PAN: req.session.userName }; if (req.session?.role === 'CE') return {}; return { inst_short_name: req.session?.institute } }
 function safe(row: Record<string, unknown>) { const copy = { ...row }; delete copy.password; return copy }
 
+const IPU_ENGINEERING_COURSE_CODES = new Set(['BTE', 'MTE', 'CSE', 'ECE', 'EEE', 'ME', 'CE', 'IT', 'CHE', 'EIE'])
+const NON_ENGINEERING_TOKENS = ['bba', 'mba', 'bca', 'ba', 'b.com', 'law', 'pharmacy', 'medical', 'mbbs', 'commerce', 'management']
+
+function enforceIpuEngineeringCourse(courseCode: string, courseFullName?: string, courseShortName?: string) {
+  const normalizedCode = String(courseCode ?? '').trim().toUpperCase()
+  const normalizedName = String(courseFullName ?? courseShortName ?? '').trim().toLowerCase()
+  if (!normalizedCode || !IPU_ENGINEERING_COURSE_CODES.has(normalizedCode)) {
+    throw new Error('Only IPU engineering courses are supported. Use an engineering course code like BTE, MTE, CSE, ECE, EEE, ME, CE, IT, CHE, or EIE.')
+  }
+  if (normalizedName && NON_ENGINEERING_TOKENS.some(token => normalizedName.includes(token))) {
+    throw new Error('Only engineering programs are supported for this IPU engineering system.')
+  }
+}
+
 app.post('/api/auth/login', async (req, res) => { const parsed = z.object({ user_name: z.string().trim().min(1).max(10), role: z.enum(['CE', 'CA', 'FAC']), password: z.string().min(1) }).safeParse(req.body); if (!parsed.success) return res.status(400).json({ error: 'Enter the username, role, and password.' }); const user = await prisma.user.findUnique({ where: { user_name_role: { user_name: parsed.data.user_name.toUpperCase(), role: parsed.data.role } } }); if (!user || !(await bcrypt.compare(parsed.data.password, user.password))) return res.status(401).json({ error: 'Invalid username, role, or password.' }); const institute = user.role === 'CA' ? user.user_name : undefined; const session: Session = { userName: user.user_name, role: user.role as Role, institute }; return res.json({ token: jwt.sign(session, jwtSecret, { expiresIn: '8h' }), user: { user_name: user.user_name, role: user.role, institute } }) })
 app.get('/api/auth/me', auth, (req: AuthedRequest, res) => res.json({ user: req.session }))
 app.post('/api/auth/logout', auth, (_req, res) => res.status(204).send())
@@ -51,8 +65,8 @@ app.put('/api/institutes/:inst_short_name', auth, allow('CE', 'CA'), async (req:
 // COURSE ENDPOINTS
 app.get('/api/courses', auth, async (_req, res) => res.json(await prisma.course.findMany({ orderBy: { course_code: 'asc' } })))
 app.get('/api/courses/:course_code', auth, async (req: AuthedRequest, res) => { const row = await prisma.course.findUnique({ where: { course_code: String(req.params.course_code) } }); if (!row) return res.status(404).json({ error: 'Course not found' }); return res.json(row) })
-app.post('/api/courses', auth, allow('CE'), async (req: AuthedRequest, res) => { const parsed = z.object({ course_code: z.string().trim().min(1).max(3), course_short_name: z.string().max(10).optional(), course_full_name: z.string().max(100).optional() }).parse(req.body); const existing = await prisma.course.findUnique({ where: { course_code: parsed.course_code } }); if (existing) return res.status(409).json({ error: 'Course already exists' }); return res.status(201).json(await prisma.course.create({ data: parsed })) })
-app.put('/api/courses/:course_code', auth, allow('CE'), async (req: AuthedRequest, res) => { const courseCode = String(req.params.course_code); const existing = await prisma.course.findUnique({ where: { course_code: courseCode } }); if (!existing) return res.status(404).json({ error: 'Course not found' }); const allowed = ['course_short_name', 'course_full_name']; const data = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key))); return res.json(await prisma.course.update({ where: { course_code: courseCode }, data })) })
+app.post('/api/courses', auth, allow('CE'), async (req: AuthedRequest, res) => { const parsed = z.object({ course_code: z.string().trim().min(1).max(3), course_short_name: z.string().max(10).optional(), course_full_name: z.string().max(100).optional() }).parse(req.body); const normalized = { ...parsed, course_code: parsed.course_code.toUpperCase() }; enforceIpuEngineeringCourse(normalized.course_code, normalized.course_full_name, normalized.course_short_name); const existing = await prisma.course.findUnique({ where: { course_code: normalized.course_code } }); if (existing) return res.status(409).json({ error: 'Course already exists' }); return res.status(201).json(await prisma.course.create({ data: normalized })) })
+app.put('/api/courses/:course_code', auth, allow('CE'), async (req: AuthedRequest, res) => { const courseCode = String(req.params.course_code); const existing = await prisma.course.findUnique({ where: { course_code: courseCode } }); if (!existing) return res.status(404).json({ error: 'Course not found' }); const allowed = ['course_short_name', 'course_full_name']; const data = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key))); const courseShortName = typeof data.course_short_name === 'string' ? data.course_short_name : undefined; const courseFullName = typeof data.course_full_name === 'string' ? data.course_full_name : undefined; enforceIpuEngineeringCourse(courseCode.toUpperCase(), courseFullName, courseShortName); return res.json(await prisma.course.update({ where: { course_code: courseCode }, data })) })
 app.delete('/api/courses/:course_code', auth, allow('CE'), async (req: AuthedRequest, res) => { try { await prisma.course.delete({ where: { course_code: String(req.params.course_code) } }); return res.status(204).send() } catch { return res.status(400).json({ error: 'Cannot delete course with existing mappings' }) } })
 
 // SPECIALIZATION ENDPOINTS
