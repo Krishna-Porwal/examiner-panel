@@ -146,5 +146,103 @@ catch {
     return res.status(400).json({ error: 'Cannot delete mapping' });
 } });
 app.get('/api/faculty-export', auth, allow('CE', 'CA'), async (req, res) => { const rows = await prisma.faculty.findMany({ where: facultyScope(req) }); const columns = ['PAN', 'Title', 'faculty_name', 'inst_short_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo']; const csv = [columns.join(','), ...rows.map((row) => columns.map((column) => JSON.stringify(row[column] ?? '')).join(','))].join('\n'); res.setHeader('Content-Type', 'text/csv'); res.setHeader('Content-Disposition', 'attachment; filename="faculty-export.csv"'); return res.send(csv); });
+app.get('/api/faculty-subjects', auth, async (req, res) => {
+    const rows = await prisma.facultySubject.findMany();
+    if (req.session?.role === 'FAC')
+        return res.json(rows.filter(row => row.PAN === req.session?.userName));
+    if (req.session?.role === 'CA') {
+        const allowed = await prisma.faculty.findMany({ where: { inst_short_name: req.session.institute }, select: { PAN: true } });
+        const panSet = new Set(allowed.map(row => row.PAN));
+        return res.json(rows.filter(row => panSet.has(row.PAN)));
+    }
+    return res.json(rows);
+});
+app.post('/api/faculty-subjects', auth, allow('CE', 'CA', 'FAC'), async (req, res) => {
+    const parsed = zod_1.z.object({ PAN: zod_1.z.string().trim().min(1).max(10), subject_code: zod_1.z.string().trim().min(1).max(10) }).parse(req.body);
+    if (req.session?.role === 'FAC' && parsed.PAN !== req.session.userName)
+        return res.status(403).json({ error: 'Faculty can only manage its own subjects' });
+    if (req.session?.role === 'CA') {
+        const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
+        if (!facultyRow || facultyRow.inst_short_name !== req.session.institute)
+            return res.status(403).json({ error: 'Faculty must belong to your institute' });
+    }
+    const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
+    if (!facultyRow)
+        return res.status(404).json({ error: 'Faculty not found' });
+    const subject = await prisma.subject.findUnique({ where: { subject_code: parsed.subject_code } });
+    if (!subject)
+        return res.status(404).json({ error: 'Subject not found' });
+    const existing = await prisma.facultySubject.findUnique({ where: { PAN_subject_code: { PAN: parsed.PAN, subject_code: parsed.subject_code } } });
+    if (existing)
+        return res.status(409).json({ error: 'Subject mapping already exists' });
+    return res.status(201).json(await prisma.facultySubject.create({ data: { PAN: parsed.PAN, subject_code: parsed.subject_code, entered_by: req.session?.userName ?? parsed.PAN, entered_on: new Date() } }));
+});
+app.delete('/api/faculty-subjects/:PAN/:subject_code', auth, allow('CE', 'CA', 'FAC'), async (req, res) => {
+    const pan = String(req.params.PAN);
+    const subjectCode = String(req.params.subject_code);
+    if (req.session?.role === 'FAC' && pan !== req.session.userName)
+        return res.status(403).json({ error: 'Faculty can only remove its own subject mappings' });
+    if (req.session?.role === 'CA') {
+        const facultyRow = await prisma.faculty.findUnique({ where: { PAN: pan } });
+        if (!facultyRow || facultyRow.inst_short_name !== req.session.institute)
+            return res.status(403).json({ error: 'Faculty must belong to your institute' });
+    }
+    try {
+        await prisma.facultySubject.delete({ where: { PAN_subject_code: { PAN: pan, subject_code: subjectCode } } });
+        return res.status(204).send();
+    }
+    catch {
+        return res.status(404).json({ error: 'Mapping not found' });
+    }
+});
+app.get('/api/faculty-specializations', auth, async (req, res) => {
+    const rows = await prisma.facultySpec.findMany();
+    if (req.session?.role === 'FAC')
+        return res.json(rows.filter(row => row.PAN === req.session?.userName));
+    if (req.session?.role === 'CA') {
+        const allowed = await prisma.faculty.findMany({ where: { inst_short_name: req.session.institute }, select: { PAN: true } });
+        const panSet = new Set(allowed.map(row => row.PAN));
+        return res.json(rows.filter(row => panSet.has(row.PAN)));
+    }
+    return res.json(rows);
+});
+app.post('/api/faculty-specializations', auth, allow('CE', 'CA', 'FAC'), async (req, res) => {
+    const parsed = zod_1.z.object({ PAN: zod_1.z.string().trim().min(1).max(10), spec_id: zod_1.z.coerce.number().int().min(1) }).parse(req.body);
+    if (req.session?.role === 'FAC' && parsed.PAN !== req.session.userName)
+        return res.status(403).json({ error: 'Faculty can only manage its own specializations' });
+    if (req.session?.role === 'CA') {
+        const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
+        if (!facultyRow || facultyRow.inst_short_name !== req.session.institute)
+            return res.status(403).json({ error: 'Faculty must belong to your institute' });
+    }
+    const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
+    if (!facultyRow)
+        return res.status(404).json({ error: 'Faculty not found' });
+    const specialization = await prisma.specialization.findUnique({ where: { spec_id: parsed.spec_id } });
+    if (!specialization)
+        return res.status(404).json({ error: 'Specialization not found' });
+    const existing = await prisma.facultySpec.findUnique({ where: { PAN_spec_id: { PAN: parsed.PAN, spec_id: parsed.spec_id } } });
+    if (existing)
+        return res.status(409).json({ error: 'Specialization mapping already exists' });
+    return res.status(201).json(await prisma.facultySpec.create({ data: { PAN: parsed.PAN, spec_id: parsed.spec_id, entered_by: req.session?.userName ?? parsed.PAN, entered_on: new Date() } }));
+});
+app.delete('/api/faculty-specializations/:PAN/:spec_id', auth, allow('CE', 'CA', 'FAC'), async (req, res) => {
+    const pan = String(req.params.PAN);
+    const specId = Number(req.params.spec_id);
+    if (req.session?.role === 'FAC' && pan !== req.session.userName)
+        return res.status(403).json({ error: 'Faculty can only remove its own specialization mappings' });
+    if (req.session?.role === 'CA') {
+        const facultyRow = await prisma.faculty.findUnique({ where: { PAN: pan } });
+        if (!facultyRow || facultyRow.inst_short_name !== req.session.institute)
+            return res.status(403).json({ error: 'Faculty must belong to your institute' });
+    }
+    try {
+        await prisma.facultySpec.delete({ where: { PAN_spec_id: { PAN: pan, spec_id: specId } } });
+        return res.status(204).send();
+    }
+    catch {
+        return res.status(404).json({ error: 'Mapping not found' });
+    }
+});
 app.use((error, _req, res, _next) => { console.error('[v0] API error', error); return res.status(400).json({ error: error instanceof Error ? error.message : 'Unexpected server error' }); });
 app.listen(port, () => console.log(`[v0] Examiner API listening on ${port}`));
