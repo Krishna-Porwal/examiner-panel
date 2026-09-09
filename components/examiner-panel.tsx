@@ -21,24 +21,32 @@ function ErrorAlert({ msg }: { msg: string }) {
   return msg ? <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{msg}</div> : null
 }
 
+function sanitizeFormPayload(form: HTMLFormElement) {
+  return Object.fromEntries(
+    Array.from(new FormData(form).entries())
+      .map(([key, value]) => [key, typeof value === 'string' ? value.trim() : value])
+      .filter(([, value]) => value !== '' && value !== null && value !== undefined)
+  )
+}
+
 function Stat({ label, value, icon: Icon }: { label: string; value: number | string; icon: any }) {
   return <div className="rounded-lg border bg-card p-4"><Icon className="mb-2 size-5" /><div className="text-2xl font-semibold">{value}</div><div className="text-sm text-muted-foreground">{label}</div></div>
 }
 
 function FacultyListTable({ fac, q, setQ, onSel, onExp, onAdd }: any) {
-  return <div className="rounded-lg border bg-card"><div className="border-b p-4 flex gap-2"><input placeholder="Search..." value={q} onChange={e => setQ(e.target.value)} className="flex-1 rounded border bg-background px-2 py-1 text-sm" /><Button variant="outline" size="sm" onClick={onExp}><Download className="size-4" />CSV</Button><Button size="sm" onClick={onAdd}><Plus className="size-4" />Add</Button></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-muted"><th className="p-2 text-left">Name</th><th className="p-2 text-left">PAN</th><th className="p-2 text-left">Institute</th><th className="p-2 text-right">Action</th></tr></thead><tbody>{fac.map((f: Faculty) => <tr key={f.PAN} className="border-b"><td className="p-2">{f.faculty_name}</td><td className="p-2 font-mono text-xs">{f.PAN}</td><td className="p-2">{f.inst_short_name}</td><td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => onSel(f)}>View</Button></td></tr>)}</tbody></table></div></div>
+  return <div className="rounded-lg border bg-card"><div className="border-b p-4 flex gap-2"><input placeholder="Search..." value={q} onChange={e => setQ(e.target.value)} className="flex-1 rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /><Button variant="outline" size="sm" onClick={onExp}><Download className="size-4" />CSV</Button><Button size="sm" onClick={onAdd}><Plus className="size-4" />Add</Button></div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-muted"><th className="p-2 text-left text-foreground">Name</th><th className="p-2 text-left text-foreground">PAN</th><th className="p-2 text-left text-foreground">Institute</th><th className="p-2 text-right text-foreground">Action</th></tr></thead><tbody>{fac.map((f: Faculty) => <tr key={f.PAN} className="border-b"><td className="p-2 text-foreground">{f.faculty_name}</td><td className="p-2 font-mono text-xs text-foreground">{f.PAN}</td><td className="p-2 text-foreground">{f.inst_short_name}</td><td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => onSel(f)}>View</Button></td></tr>)}</tbody></table></div></div>
 }
 
 function FacultyDialog({ fac, onClose, onEdit }: any) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold">{fac?.faculty_name || 'Faculty'}</h2><button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-2 text-sm mb-4"><div><strong>PAN:</strong> {fac?.PAN}</div><div><strong>Email:</strong> {fac?.faculty_Email}</div><div><strong>Designation:</strong> {fac?.faculty_desig}</div><div><strong>Institute:</strong> {fac?.inst_short_name}</div></div><div className="flex gap-2 justify-end"><Button variant="outline" onClick={onClose}>Close</Button><Button onClick={onEdit}>Edit</Button></div></div></div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{fac?.faculty_name || 'Faculty'}</h2><button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-2 text-sm mb-4 text-foreground"><div><strong>PAN:</strong> {fac?.PAN}</div><div><strong>Email:</strong> {fac?.faculty_Email}</div><div><strong>Designation:</strong> {fac?.faculty_desig}</div><div><strong>Institute:</strong> {fac?.inst_short_name}</div></div><div className="flex gap-2 justify-end"><Button variant="outline" onClick={onClose}>Close</Button><Button onClick={onEdit}>Edit</Button></div></div></div>
 }
 
 function FacultyForm({ fac, onClose, onSubmit }: any) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold">{fac?.PAN ? 'Edit' : 'Add'} Faculty</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4">{['PAN', 'Title', 'faculty_name', 'inst_short_name', 'faculty_desig', 'faculty_Email'].map(n => <label key={n} className="block"><span className="text-sm font-medium">{n}</span><input name={n} defaultValue={fac?.[n] ?? ''} readOnly={n === 'PAN' && fac?.PAN} className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm" /></label>)}</div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{fac?.PAN ? 'Edit' : 'Add'} Faculty</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4">{['PAN', 'Title', 'faculty_name', 'inst_short_name', 'faculty_desig', 'faculty_Email'].map(n => <label key={n} className="block"><span className="text-sm font-medium text-foreground">{n}</span><input name={n} defaultValue={fac?.[n] ?? ''} readOnly={n === 'PAN' && fac?.PAN} required={n === 'PAN'} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label>)}</div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
 }
 
 function InstituteForm({ inst, onClose, onSubmit }: any) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold">Edit Institute</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4">{['inst_short_name', 'inst_full_name', 'inst_District', 'inst_State', 'Director_Name', 'Director_Email'].map(n => <label key={n} className="block"><span className="text-sm font-medium">{n}</span><input name={n} defaultValue={inst?.[n] ?? ''} readOnly={n === 'inst_short_name'} className="mt-1 w-full rounded border bg-background px-2 py-1 text-sm" /></label>)}</div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">Edit Institute</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4">{['inst_short_name', 'inst_full_name', 'inst_District', 'inst_State', 'Director_Name', 'Director_Email'].map(n => <label key={n} className="block"><span className="text-sm font-medium text-foreground">{n}</span><input name={n} defaultValue={inst?.[n] ?? ''} readOnly={n === 'inst_short_name' && !!inst?.inst_short_name} required={n === 'inst_short_name'} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label>)}</div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
 }
 
 export default function ExaminerPanel() {
@@ -137,7 +145,10 @@ export default function ExaminerPanel() {
     setBusy(true)
     setError('')
     try {
-      const payload = Object.fromEntries(new FormData(e.currentTarget))
+      const payload = sanitizeFormPayload(e.currentTarget)
+      if (!payload.PAN || String(payload.PAN).trim().length === 0) {
+        throw new Error('PAN is required.')
+      }
       const isCreate = !editing.PAN
       const saved = await request(isCreate ? '/api/faculty' : `/api/faculty/${encodeURIComponent(editing.PAN)}`, {
         method: isCreate ? 'POST' : 'PUT',
@@ -159,8 +170,11 @@ export default function ExaminerPanel() {
     setBusy(true)
     setError('')
     try {
-      const payload = Object.fromEntries(new FormData(e.currentTarget))
+      const payload = sanitizeFormPayload(e.currentTarget)
       const isCreate = !editingInst.inst_short_name
+      if (isCreate && (!payload.inst_short_name || String(payload.inst_short_name).trim().length === 0)) {
+        throw new Error('Institute short name is required.')
+      }
       const saved = await request(isCreate ? '/api/institutes' : `/api/institutes/${encodeURIComponent(editingInst.inst_short_name)}`, {
         method: isCreate ? 'POST' : 'PUT',
         body: JSON.stringify(payload),
@@ -190,26 +204,26 @@ export default function ExaminerPanel() {
                 <ShieldCheck />
               </div>
               <div>
-                <p className="font-semibold">Examiner Panel</p>
+                <p className="font-semibold text-foreground">Examiner Panel</p>
                 <p className="text-sm text-muted-foreground">Secure academic administration</p>
               </div>
             </div>
             <div className="flex flex-col gap-4">
-              <label className="flex flex-col gap-2 text-sm font-medium">
+              <label className="flex flex-col gap-2 text-sm font-medium text-foreground">
                 Username
-                <input required maxLength={10} value={login.user_name} onChange={e => setLogin({ ...login, user_name: e.target.value })} className="h-10 rounded-lg border border-input bg-background px-3 font-normal" />
+                <input required maxLength={10} value={login.user_name} onChange={e => setLogin({ ...login, user_name: e.target.value })} className="h-10 rounded-lg border border-input bg-background px-3 font-normal text-foreground placeholder:text-muted-foreground" />
               </label>
-              <label className="flex flex-col gap-2 text-sm font-medium">
+              <label className="flex flex-col gap-2 text-sm font-medium text-foreground">
                 Role
-                <select value={login.role} onChange={e => setLogin({ ...login, role: e.target.value as Role })} className="h-10 rounded-lg border border-input bg-background px-3 font-normal">
+                <select value={login.role} onChange={e => setLogin({ ...login, role: e.target.value as Role })} className="h-10 rounded-lg border border-input bg-background px-3 font-normal text-foreground">
                   <option value="CA">College Admin</option>
                   <option value="FAC">Faculty</option>
                   <option value="CE">Central Examiner</option>
                 </select>
               </label>
-              <label className="flex flex-col gap-2 text-sm font-medium">
+              <label className="flex flex-col gap-2 text-sm font-medium text-foreground">
                 Password
-                <input required type="password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })} className="h-10 rounded-lg border border-input bg-background px-3 font-normal" />
+                <input required type="password" value={login.password} onChange={e => setLogin({ ...login, password: e.target.value })} className="h-10 rounded-lg border border-input bg-background px-3 font-normal text-foreground placeholder:text-muted-foreground" />
               </label>
               {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
               <Button type="submit" disabled={busy}>
@@ -220,7 +234,7 @@ export default function ExaminerPanel() {
 
           <section className="rounded-2xl border border-border bg-card p-7">
             <p className="text-sm font-medium text-primary">Demo access</p>
-            <h2 className="mt-1 text-2xl font-semibold">Use a seeded account</h2>
+            <h2 className="mt-1 text-2xl font-semibold text-foreground">Use a seeded account</h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">Choose a role and copy credentials.</p>
             <div className="mt-6 flex flex-col gap-3">
               {demoCredentials.map(([label, username, password]) => (
@@ -228,10 +242,10 @@ export default function ExaminerPanel() {
                   type="button"
                   key={username}
                   onClick={() => setLogin({ user_name: username, role: label === 'Central Examiner' ? 'CE' : label === 'College Admin' ? 'CA' : 'FAC', password })}
-                  className="rounded-xl border border-border bg-background p-4 text-left transition-colors hover:bg-muted"
+                  className="rounded-xl border border-border bg-background p-4 text-left text-foreground transition-colors hover:bg-muted"
                 >
                   <div className="flex items-center justify-between gap-3">
-                    <span className="font-medium">{label}</span>
+                    <span className="font-medium text-foreground">{label}</span>
                     <span className="text-xs text-primary">Use</span>
                   </div>
                   <p className="mt-2 font-mono text-xs text-muted-foreground">
@@ -250,16 +264,16 @@ export default function ExaminerPanel() {
 
   return (
     <div className="min-h-screen bg-background text-foreground">
-      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-border bg-sidebar transition-transform lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
-        <div className="flex h-20 items-center gap-3 border-b px-5">
-          <div className="flex size-10 items-center justify-center rounded-xl bg-primary">
+      <aside className={`fixed inset-y-0 left-0 z-40 flex w-64 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-transform lg:translate-x-0 ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+        <div className="flex h-20 items-center gap-3 border-b border-sidebar-border px-5">
+          <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground">
             <ShieldCheck className="size-5" />
           </div>
           <div>
-            <p className="font-semibold">Examiner</p>
-            <p className="text-xs text-muted-foreground">{roleLabels[session.role]}</p>
+            <p className="font-semibold text-sidebar-foreground">Examiner</p>
+            <p className="text-xs text-sidebar-foreground/80">{roleLabels[session.role]}</p>
           </div>
-          <button className="ml-auto lg:hidden" onClick={() => setSidebarOpen(false)}>
+          <button className="ml-auto lg:hidden text-sidebar-foreground" onClick={() => setSidebarOpen(false)}>
             <X />
           </button>
         </div>
@@ -271,14 +285,14 @@ export default function ExaminerPanel() {
                 setActive(item)
                 setSidebarOpen(false)
               }}
-              className={`rounded-lg px-3 py-2.5 text-left text-sm ${active === item ? 'bg-primary font-medium' : 'hover:bg-muted'}`}
+              className={`rounded-lg px-3 py-2.5 text-left text-sm ${active === item ? 'bg-sidebar-primary font-medium text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground'}`}
             >
               {item}
             </button>
           ))}
         </nav>
-        <div className="border-t p-4">
-          <button onClick={signOut} className="flex w-full items-center gap-3 rounded-lg p-2 text-sm hover:bg-muted">
+        <div className="border-t border-sidebar-border p-4">
+          <button onClick={signOut} className="flex w-full items-center gap-3 rounded-lg p-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground">
             <LogOut className="size-4" />
             Sign out
           </button>
@@ -288,17 +302,17 @@ export default function ExaminerPanel() {
       {sidebarOpen && <button className="fixed inset-0 z-30 bg-black/20 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
       <main className="lg:pl-64">
-        <header className="flex h-20 items-center justify-between border-b bg-card px-8">
+        <header className="flex h-20 items-center justify-between border-b bg-card px-8 text-foreground">
           <div className="flex items-center gap-3">
-            <button className="lg:hidden" onClick={() => setSidebarOpen(true)}>
+            <button className="lg:hidden text-foreground" onClick={() => setSidebarOpen(true)}>
               <Menu />
             </button>
             <div>
               <p className="text-xs text-muted-foreground">{session.institute || 'Global'}</p>
-              <h1 className="text-lg font-semibold">{active}</h1>
+              <h1 className="text-lg font-semibold text-foreground">{active}</h1>
             </div>
           </div>
-          <UserRound className="size-4" />
+          <UserRound className="size-4 text-foreground" />
         </header>
 
         <div className="p-8">
@@ -306,14 +320,14 @@ export default function ExaminerPanel() {
 
           {isFaculty ? (
             <div>
-              <h2 className="mb-6 text-2xl font-semibold">My Profile</h2>
+              <h2 className="mb-6 text-2xl font-semibold text-foreground">My Profile</h2>
               {active === 'My Profile' && (
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-card p-4 text-foreground">
                   {profile ? (
                     <>
                       <div className="flex justify-between mb-4">
                         <div>
-                          <div className="font-semibold">
+                          <div className="font-semibold text-foreground">
                             {profile.Title} {profile.faculty_name}
                           </div>
                           <div className="text-sm text-muted-foreground">PAN: {profile.PAN}</div>
@@ -322,7 +336,7 @@ export default function ExaminerPanel() {
                           Edit
                         </Button>
                       </div>
-                      <div className="grid gap-2 text-sm">
+                      <div className="grid gap-2 text-sm text-foreground">
                         <div>
                           <strong>Email:</strong> {profile.faculty_Email}
                         </div>
@@ -335,16 +349,16 @@ export default function ExaminerPanel() {
                       </div>
                     </>
                   ) : (
-                    <p>No profile</p>
+                    <p className="text-foreground">No profile</p>
                   )}
                 </div>
               )}
             </div>
           ) : session.role === 'CA' ? (
             <div>
-              <h2 className="mb-6 text-2xl font-semibold">My Institute</h2>
+              <h2 className="mb-6 text-2xl font-semibold text-foreground">My Institute</h2>
               {active === 'My College' && (
-                <div className="rounded-lg border bg-card p-4 mb-4">
+                <div className="rounded-lg border bg-card p-4 mb-4 text-foreground">
                   <Button onClick={() => setEditingInst(institutes[0])} className="mb-4">
                     Edit
                   </Button>
@@ -352,7 +366,7 @@ export default function ExaminerPanel() {
                     <div>
                       <strong>{institutes[0]?.inst_full_name}</strong>
                     </div>
-                    <div className="text-sm">
+                    <div className="text-sm text-muted-foreground">
                       {institutes[0]?.inst_District}, {institutes[0]?.inst_State}
                     </div>
                   </div>
@@ -362,7 +376,7 @@ export default function ExaminerPanel() {
             </div>
           ) : (
             <div>
-              <h2 className="mb-6 text-2xl font-semibold">Global Workspace</h2>
+              <h2 className="mb-6 text-2xl font-semibold text-foreground">Global Workspace</h2>
               {active === 'Overview' && (
                 <div className="grid gap-4 sm:grid-cols-4">
                   <Stat label="Institutes" value={institutes.length} icon={Building2} />
@@ -372,15 +386,15 @@ export default function ExaminerPanel() {
                 </div>
               )}
               {active === 'Institutes' && (
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-card p-4 text-foreground">
                   <Button onClick={() => setEditingInst({ inst_short_name: '' })} className="mb-4">
                     <Plus className="size-4" />
                     Add
                   </Button>
                   <div className="space-y-2">
                     {institutes.map(i => (
-                      <div key={i.inst_short_name} className="border-b p-2">
-                        <div className="font-mono text-sm">{i.inst_short_name}</div>
+                      <div key={i.inst_short_name} className="border-b border-border p-2">
+                        <div className="font-mono text-sm text-foreground">{i.inst_short_name}</div>
                         <div className="text-sm text-muted-foreground">{i.inst_full_name}</div>
                       </div>
                     ))}
@@ -388,11 +402,11 @@ export default function ExaminerPanel() {
                 </div>
               )}
               {active === 'Courses' && (
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-card p-4 text-foreground">
                   <div className="space-y-2">
                     {courses.map(c => (
-                      <div key={c.course_code} className="border-b p-2">
-                        <div className="font-mono text-sm">{c.course_code}</div>
+                      <div key={c.course_code} className="border-b border-border p-2">
+                        <div className="font-mono text-sm text-foreground">{c.course_code}</div>
                         <div className="text-sm text-muted-foreground">{c.course_full_name}</div>
                       </div>
                     ))}
@@ -400,10 +414,10 @@ export default function ExaminerPanel() {
                 </div>
               )}
               {active === 'Specializations' && (
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-card p-4 text-foreground">
                   <div className="space-y-2">
                     {specializations.map(s => (
-                      <div key={s.spec_id} className="border-b p-2 text-sm">
+                      <div key={s.spec_id} className="border-b border-border p-2 text-sm text-foreground">
                         <span className="font-mono">{s.spec_id}</span> - <span>{s.spec_name}</span>
                       </div>
                     ))}
@@ -411,11 +425,11 @@ export default function ExaminerPanel() {
                 </div>
               )}
               {active === 'Subjects' && (
-                <div className="rounded-lg border bg-card p-4">
+                <div className="rounded-lg border bg-card p-4 text-foreground">
                   <div className="space-y-2">
                     {subjects.map(s => (
-                      <div key={s.subject_code} className="border-b p-2">
-                        <div className="font-mono text-sm">{s.subject_code}</div>
+                      <div key={s.subject_code} className="border-b border-border p-2">
+                        <div className="font-mono text-sm text-foreground">{s.subject_code}</div>
                         <div className="text-sm text-muted-foreground">{s.subject_full_name}</div>
                       </div>
                     ))}
