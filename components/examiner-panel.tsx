@@ -90,7 +90,7 @@ function downloadCsv(filename: string, headers: string[], rows: Record<string, a
   URL.revokeObjectURL(url)
 }
 const roleLabels: Record<Role, string> = { CE: 'Central Examiner', CA: 'College Admin', FAC: 'Faculty' }
-const navFor: Record<Role, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Credentials'], CA: ['My College', 'Faculty', 'Credentials'], FAC: ['My Profile', 'My Subjects', 'My Specializations'] }
+const navFor: Record<Role, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Credentials'], CA: ['My College', 'Courses', 'Subjects', 'Faculty', 'Credentials'], FAC: ['My Profile', 'Courses', 'Subjects', 'Faculty', 'My Subjects', 'My Specializations'] }
 const IPU_ENGINEERING_COURSE_CODES = new Set(['BTE', 'MTE', 'CSE', 'ECE', 'EEE', 'ME', 'CE', 'IT', 'CHE', 'EIE'])
 const NON_ENGINEERING_COURSE_TOKENS = ['bba', 'mba', 'bca', 'ba', 'b.com', 'law', 'pharmacy', 'medical', 'mbbs', 'commerce', 'management']
 
@@ -906,6 +906,54 @@ export default function ExaminerPanel() {
                   </div>
                 </div>
               )}
+
+              {active === 'Courses' && (
+                <div className="rounded-lg border bg-card p-4 text-foreground">
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Courses</h3><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => downloadCsv('courses.csv', ['course_code', 'course_short_name', 'course_full_name'], courses)}>Download CSV</Button></div></div></div>
+                  </div>
+                  <div className="space-y-2">
+                    {courses.map(c => (
+                      <div key={c.course_code} className="flex items-center justify-between border-b border-border p-2">
+                        <div>
+                          <div className="font-mono text-sm text-foreground">{c.course_code}</div>
+                          <div className="text-sm text-muted-foreground">{c.course_full_name}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {active === 'Subjects' && (
+                <div className="rounded-lg border bg-card p-4 text-foreground">
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Subjects</h3><div className="flex gap-2"><Button variant="outline" size="sm" onClick={() => downloadCsv('subjects.csv', ['subject_code', 'sub_subject_codes', 'subject_short_name', 'subject_full_name', 'semester', 'spec_id'], subjects)}>Download CSV</Button></div></div></div>
+                  </div>
+                  <div className="space-y-2">
+                    {subjects.map(s => (
+                      <div key={s.subject_code} className="flex items-center justify-between border-b border-border p-2">
+                        <div>
+                          <div className="font-mono text-sm text-foreground">{s.subject_code}</div>
+                          <div className="text-sm text-muted-foreground">{s.subject_full_name}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {active === 'Faculty' && (
+                <div className="space-y-4">
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <Button onClick={() => setEditing({ PAN: '', inst_short_name: session.institute ?? '' })} className="mb-4"><Plus className="size-4" />Add Faculty</Button>
+                    <div className="mb-4">
+                      <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Faculty</h3><div className="flex gap-2"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.PAN) continue; try { await request('/api/faculty', {method: 'POST', body: JSON.stringify({PAN: row.PAN || '', Title: row.Title || undefined, faculty_name: row.faculty_name || undefined, inst_short_name: session.institute || undefined, faculty_desig: row.faculty_desig || undefined, faculty_total_exp: row.faculty_total_exp ? Number(row.faculty_total_exp) : undefined, faculty_address: row.faculty_address || undefined, faculty_Email: row.faculty_Email || undefined, faculty_MobileNo: row.faculty_MobileNo || undefined})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import faculty csv'); break } }; setNotice('Faculty CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'Title', 'faculty_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo'], ownInstituteFaculty)}>Download CSV</Button></div></div></div>
+                    </div>
+                    <FacultyListTable fac={filtered} q={query} setQ={setQuery} onSel={setSelected} onExp={() => window.open(`${API}/api/faculty-export?token=${sessionToken()}`, '_blank')} onAdd={() => setEditing({ PAN: '', inst_short_name: session.institute ?? '' })} onCreateCredential={() => {}} canCreateCredential={false} canDelete={false} onDelete={deleteFaculty} />
+                  </div>
+                </div>
+              )}
             </div>
           ) : session.role === 'CA' ? (
             <div>
@@ -944,6 +992,10 @@ export default function ExaminerPanel() {
                 <div className="space-y-4">
                   <FacultyListTable fac={filtered} q={query} setQ={setQuery} onSel={setSelected} onExp={() => window.open(`${API}/api/faculty-export?token=${sessionToken()}`, '_blank')} onAdd={() => setEditing({ PAN: '', inst_short_name: session.institute ?? '' })} onCreateCredential={() => {}} canCreateCredential={false} canDelete={false} onDelete={deleteFaculty} />
 
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Faculty</h3><div className="flex gap-2"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.PAN) continue; try { await request('/api/faculty', {method: 'POST', body: JSON.stringify({PAN: row.PAN || '', Title: row.Title || undefined, faculty_name: row.faculty_name || undefined, inst_short_name: session.institute || undefined, faculty_desig: row.faculty_desig || undefined, faculty_total_exp: row.faculty_total_exp ? Number(row.faculty_total_exp) : undefined, faculty_address: row.faculty_address || undefined, faculty_Email: row.faculty_Email || undefined, faculty_MobileNo: row.faculty_MobileNo || undefined})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import faculty csv'); break } }; setNotice('Faculty CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'Title', 'faculty_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo'], faculty)}>Download CSV</Button></div></div></div>
+                  </div>
+
                   <div className="rounded-lg border bg-card p-4">
                     <h3 className="mb-3 text-lg font-semibold text-foreground">Create Faculty Credential</h3>
                     <div className="flex flex-col gap-3 md:flex-row">
@@ -964,6 +1016,77 @@ export default function ExaminerPanel() {
                       />
                       <Button onClick={() => saveCredential('FAC', facCredential)} disabled={!facCredential.user_name || facCredential.password.length < 8}>Create</Button>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {active === 'Courses' && (
+                <div className="rounded-lg border bg-card p-4 text-foreground">
+                  <Button onClick={() => setEditingCourse({ course_code: '', course_short_name: '', course_full_name: '' })} className="mb-4"><Plus className="size-4" />Add Course</Button>
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Courses</h3><div className="flex gap-2"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.course_code) continue; try { await request('/api/courses', {method: 'POST', body: JSON.stringify({course_code: row.course_code, course_short_name: row.course_short_name || undefined, course_full_name: row.course_full_name || undefined})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import course csv'); break } }; setNotice('Course CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('courses.csv', ['course_code', 'course_short_name', 'course_full_name'], courses)}>Download CSV</Button></div></div></div>
+                  </div>
+                  <div className="space-y-2">
+                    {courses.map(c => (
+                      <div key={c.course_code} className="flex items-center justify-between border-b border-border p-2">
+                        <div>
+                          <div className="font-mono text-sm text-foreground">{c.course_code}</div>
+                          <div className="text-sm text-muted-foreground">{c.course_full_name}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={() => setEditingCourse(c)}>Edit</Button>
+                          <Button variant="outline" size="sm" onClick={() => deleteCourse(c.course_code)}>Delete</Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {active === 'Subjects' && (
+                <div className="rounded-lg border bg-card p-4 text-foreground">
+                  <Button onClick={() => setEditingSubject({ subject_code: '', subject_short_name: '', subject_full_name: '', semester: undefined, spec_id: undefined })} className="mb-4"><Plus className="size-4" />Add Subject</Button>
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Subjects</h3><div className="flex gap-2"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.subject_code) continue; try { await request('/api/subjects', {method: 'POST', body: JSON.stringify({subject_code: row.subject_code, subject_short_name: row.subject_short_name || undefined, subject_full_name: row.subject_full_name || undefined, semester: row.semester ? Number(row.semester) : undefined, spec_id: row.spec_id ? Number(row.spec_id) : undefined, sub_subject_codes: row.sub_subject_codes || undefined})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import subject csv'); break } }; setNotice('Subject CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('subjects.csv', ['subject_code', 'sub_subject_codes', 'subject_short_name', 'subject_full_name', 'semester', 'spec_id'], subjects)}>Download CSV</Button></div></div></div>
+                  </div>
+                  <div className="space-y-2">
+                    {subjects.map(s => (
+                      <div key={s.subject_code} className="flex items-center justify-between border-b border-border p-2">
+                        <div>
+                          <div className="font-mono text-sm text-foreground">{s.subject_code}</div>
+                          <div className="text-sm text-muted-foreground">{s.subject_full_name}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" onClick={() => setEditingSubject(s)}>Edit</Button>
+                          <Button variant="outline" size="sm" onClick={() => deleteSubject(s.subject_code)}>Delete</Button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {active === 'Credentials' && (
+                <div className="rounded-lg border bg-card p-4 text-foreground">
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Credentials</h3><div className="flex gap-2"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.user_name) continue; try { const role = normalizeCredentialRole(row.role); if (role === 'ALL') { setError('Invalid credential role in CSV'); break }; await request('/api/users', {method: 'POST', body: JSON.stringify({user_name: normalizeUserName(row.user_name), role: role, password: row.password || 'temp123'})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import credential csv'); break } }; setNotice('Credential CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('credentials.csv', ['user_name', 'role', 'password'], visibleUsers)}>Download CSV</Button></div></div></div>
+                  </div>
+                  <div className="mb-3 flex gap-2">
+                    {(['ALL', 'CA', 'FAC'] as const).map(filter => (
+                      <Button key={filter} variant={credentialFilter === filter ? 'default' : 'outline'} size="sm" onClick={() => setCredentialFilter(filter)}>
+                        {filter === 'ALL' ? 'All Users' : filter === 'CA' ? 'College Admins' : 'Faculty'}
+                      </Button>
+                    ))}
+                  </div>
+                  <div className="space-y-2">
+                    {visibleUsers.map((c: any) => (
+                      <div key={`${c.user_name}-${c.role}`} className="flex items-center justify-between rounded border p-3">
+                        <div>
+                          <div className="font-mono text-sm text-foreground">{c.user_name}</div>
+                          <div className="text-xs text-muted-foreground">{c.role}</div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
