@@ -17,11 +17,80 @@ type InstCourseMap = { inst_short_name: string; course_code: string; intake?: nu
 type CourseSubjectMap = { course_code: string; subject_code: string }
 
 type UserPayload = { user_name: string; password: string; role: 'CA' | 'FAC' }
+type UserCredential = { user_name: string; role: string }
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
 const demoCredentials = [['Central Examiner', 'CENTRAL', 'change-me'], ['College Admin', 'NIT', 'college123'], ['Faculty', 'ABCDE1234F', 'faculty123']] as const
+
+function normalizeUserName(value: string) {
+  return value.trim().replace(/\s+/g, '').toUpperCase()
+}
+
+function normalizeCredentialRole(value: string | undefined): 'CA' | 'FAC' | 'ALL' {
+  const normalized = String(value ?? '').trim().toLowerCase()
+  if (['ca', 'college admin', 'clg admin', 'college-admin', 'college_admin', 'institute admin'].includes(normalized)) return 'CA'
+  if (['fac', 'faculty'].includes(normalized)) return 'FAC'
+  return 'ALL'
+}
+
+function parseCsvRecords(csvText: string) {
+  const rows: string[][] = []
+  let current = ''
+  let row: string[] = []
+  let inQuotes = false
+  for (let i = 0; i < csvText.length; i += 1) {
+    const ch = csvText[i]
+    if (ch === '"') {
+      if (inQuotes && csvText[i + 1] === '"') {
+        current += '"'
+        i += 1
+      } else {
+        inQuotes = !inQuotes
+      }
+      continue
+    }
+    if (ch === ',' && !inQuotes) {
+      row.push(current)
+      current = ''
+      continue
+    }
+    if ((ch === '\n' || ch === '\r') && !inQuotes) {
+      if (ch === '\r' && csvText[i + 1] === '\n') i += 1
+      row.push(current)
+      if (row.some(value => value.trim() !== '')) rows.push(row)
+      row = []
+      current = ''
+      continue
+    }
+    current += ch
+  }
+  if (current.length || row.length) {
+    row.push(current)
+    if (row.some(value => value.trim() !== '')) rows.push(row)
+  }
+  if (rows.length < 2) return []
+  const [headerRow, ...dataRows] = rows
+  return dataRows.map(values => {
+    const record: Record<string, string> = {}
+    headerRow.forEach((header, index) => {
+      record[header.trim()] = (values[index] ?? '').trim()
+    })
+    return record
+  }).filter(record => Object.values(record).some(value => value !== ''))
+}
+
+function downloadCsv(filename: string, headers: string[], rows: Record<string, any>[]) {
+  const csvContent = [headers.join(','), ...rows.map(row => headers.map(header => JSON.stringify(row[header] ?? '')).join(','))].join('\n')
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
 const roleLabels: Record<Role, string> = { CE: 'Central Examiner', CA: 'College Admin', FAC: 'Faculty' }
-const navFor: Record<Role, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty'], CA: ['My College', 'Faculty'], FAC: ['My Profile', 'My Subjects', 'My Specializations'] }
+const navFor: Record<Role, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Credentials'], CA: ['My College', 'Faculty', 'Credentials'], FAC: ['My Profile', 'My Subjects', 'My Specializations'] }
 const IPU_ENGINEERING_COURSE_CODES = new Set(['BTE', 'MTE', 'CSE', 'ECE', 'EEE', 'ME', 'CE', 'IT', 'CHE', 'EIE'])
 const NON_ENGINEERING_COURSE_TOKENS = ['bba', 'mba', 'bca', 'ba', 'b.com', 'law', 'pharmacy', 'medical', 'mbbs', 'commerce', 'management']
 
@@ -127,6 +196,8 @@ export default function ExaminerPanel() {
   const [busy, setBusy] = useState(false)
   const [caCredential, setCaCredential] = useState<UserPayload>({ user_name: '', password: '', role: 'CA' })
   const [facCredential, setFacCredential] = useState<UserPayload>({ user_name: '', password: '', role: 'FAC' })
+  const [users, setUsers] = useState<UserCredential[]>([])
+  const [credentialFilter, setCredentialFilter] = useState<'ALL' | 'CA' | 'FAC'>('ALL')
 
   const sessionToken = () => typeof window === 'undefined' ? '' : sessionStorage.getItem('examiner-token') ?? ''
 
@@ -169,6 +240,7 @@ export default function ExaminerPanel() {
       const facultySpecRows = await request('/api/faculty-specializations').catch(() => [])
       const instCourseRows = session?.role !== 'FAC' ? await request('/api/inst-courses').catch(() => []) : []
       const courseSubjectRows = session?.role !== 'FAC' ? await request('/api/course-subjects').catch(() => []) : []
+      const userRows = (session?.role === 'CE' || session?.role === 'CA') ? await request('/api/users').catch(() => []) : []
       setFaculty(Array.isArray(facultyRows) ? facultyRows : [])
       setInstitutes(Array.isArray(instituteRows) ? instituteRows : [])
       setCourses(Array.isArray(courseRows) ? courseRows : [])
@@ -178,6 +250,7 @@ export default function ExaminerPanel() {
       setFacultySpecs(Array.isArray(facultySpecRows) ? facultySpecRows : [])
       setInstCourseMappings(Array.isArray(instCourseRows) ? instCourseRows : [])
       setCourseSubjectMappings(Array.isArray(courseSubjectRows) ? courseSubjectRows : [])
+      setUsers(Array.isArray(userRows) ? userRows : [])
       if (session?.role === 'CA' && institutes.length === 0 && instituteRows?.length) {
         setCaCredential((prev) => ({ ...prev, user_name: instituteRows[0]?.inst_short_name ?? '' }))
       }
@@ -191,6 +264,11 @@ export default function ExaminerPanel() {
     [faculty, query]
   )
 
+  const visibleUsers = useMemo(
+    () => credentialFilter === 'ALL' ? users : users.filter(user => user.role === credentialFilter),
+    [users, credentialFilter]
+  )
+
   const mySubjects = facultySubjects.filter(item => item.PAN === session?.userName)
   const mySpecializations = facultySpecs.filter(item => item.PAN === session?.userName)
   const ownInstituteFaculty = faculty.filter(row => row.inst_short_name === session?.institute)
@@ -201,10 +279,11 @@ export default function ExaminerPanel() {
     setError('')
     setNotice('')
     try {
+      const normalizedUserName = normalizeUserName(login.user_name)
       const res = await fetch(`${API}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...login, user_name: login.user_name.trim().toUpperCase() }),
+        body: JSON.stringify({ ...login, user_name: normalizedUserName, password: login.password.trim() }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) throw new Error(data.error ?? 'Unable to sign in')
@@ -472,24 +551,6 @@ export default function ExaminerPanel() {
     }
   }
 
-  async function saveCredential(type: 'CA' | 'FAC', payload: UserPayload) {
-    setBusy(true)
-    setError('')
-    setNotice('')
-    try {
-      const body = { user_name: payload.user_name.trim().toUpperCase(), role: type, password: payload.password }
-      await request('/api/users', { method: 'POST', body: JSON.stringify(body) })
-      setNotice(`${type === 'CA' ? 'College Admin' : 'Faculty'} credential created successfully.`)
-      setCaCredential({ user_name: '', password: '', role: 'CA' })
-      setFacCredential({ user_name: '', password: '', role: 'FAC' })
-      await loadData()
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Unable to create credential')
-    } finally {
-      setBusy(false)
-    }
-  }
-
   async function saveInstCourse(req: { inst_short_name: string; course_code: string; intake?: string; strength?: string }) {
     setBusy(true)
     setError('')
@@ -573,6 +634,65 @@ export default function ExaminerPanel() {
     } finally {
       setBusy(false)
     }
+  }
+
+  async function saveCredential(type: 'CA' | 'FAC', payload: UserPayload) {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const normalizedUserName = normalizeUserName(payload.user_name)
+      const body = { user_name: normalizedUserName, role: type, password: payload.password.trim() }
+      await request('/api/users', { method: 'POST', body: JSON.stringify(body) })
+      setNotice(`${type === 'CA' ? 'College Admin' : 'Faculty'} credential created for "${normalizedUserName}". They can now sign in with this username and password.`)
+      setCaCredential({ user_name: '', password: '', role: 'CA' })
+      setFacCredential({ user_name: '', password: '', role: 'FAC' })
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Unable to create credential'
+      if (msg.toLowerCase().includes('already exists')) {
+        setError(`A login credential already exists for this ${type === 'CA' ? 'institute' : 'faculty'}. It has been removed from the list.`)
+        setCaCredential({ user_name: '', password: '', role: 'CA' })
+        setFacCredential({ user_name: '', password: '', role: 'FAC' })
+      } else {
+        setError(msg)
+      }
+    } finally {
+      setBusy(false)
+      await loadData()
+    }
+  }
+
+  async function deleteCredential(user_name: string, role: string) {
+    if (!window.confirm(`Revoke ${role === 'CA' ? 'College Admin' : 'Faculty'} credential for "${user_name}"? They will no longer be able to sign in.`)) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      await request(`/api/users/${encodeURIComponent(user_name)}/${encodeURIComponent(role)}`, { method: 'DELETE' })
+      setNotice(`Credential for "${user_name}" (${role}) revoked.`)
+      await loadData()
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to revoke credential')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function importCredentialCsv(records: Record<string, string>[]) {
+    for (const row of records) {
+      const userName = normalizeUserName(row.user_name ?? row.UserName ?? row.username ?? '')
+      const roleValue = normalizeCredentialRole(row.role ?? row.Role ?? row.role_name ?? '')
+      const role = roleValue === 'ALL' ? credentialFilter : roleValue
+      const password = String(row.password ?? row.Password ?? row.pass ?? '').trim()
+      if (!userName || role === 'ALL') continue
+      if (password.length < 8) throw new Error(`Password for ${userName} must be at least 8 characters long.`)
+      await request('/api/users', {
+        method: 'POST',
+        body: JSON.stringify({ user_name: userName, role, password }),
+      })
+    }
+    setNotice('Credential CSV imported successfully.')
+    await loadData()
   }
 
   async function deleteInstitute(instShortName: string) {
@@ -822,7 +942,7 @@ export default function ExaminerPanel() {
 
               {active === 'Faculty' && (
                 <div className="space-y-4">
-                  <FacultyListTable fac={filtered} q={query} setQ={setQuery} onSel={setSelected} onExp={() => window.open(`${API}/api/faculty-export?token=${sessionToken()}`, '_blank')} onAdd={() => setEditing({ PAN: '', inst_short_name: session.institute ?? '' })} onCreateCredential={() => {}} canCreateCredential={false} canDelete={session?.role === 'CE'} onDelete={deleteFaculty} />
+                  <FacultyListTable fac={filtered} q={query} setQ={setQuery} onSel={setSelected} onExp={() => window.open(`${API}/api/faculty-export?token=${sessionToken()}`, '_blank')} onAdd={() => setEditing({ PAN: '', inst_short_name: session.institute ?? '' })} onCreateCredential={() => {}} canCreateCredential={false} canDelete={false} onDelete={deleteFaculty} />
 
                   <div className="rounded-lg border bg-card p-4">
                     <h3 className="mb-3 text-lg font-semibold text-foreground">Create Faculty Credential</h3>
@@ -927,6 +1047,9 @@ export default function ExaminerPanel() {
               {active === 'Specializations' && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
                   <Button onClick={() => setEditingSpec({ spec_id: 0, spec_name: '' })} className="mb-4"><Plus className="size-4" />Add Specialization</Button>
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Specializations</h3><div className="flex gap-2"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.spec_id) continue; try { await request('/api/specializations', {method: 'POST', body: JSON.stringify({spec_id: Number(row.spec_id), spec_name: row.spec_name || undefined})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import specialization csv'); break } }; setNotice('Specialization CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('specializations.csv', ['spec_id', 'spec_name'], specializations)}>Download CSV</Button></div></div></div>
+                  </div>
                   <div className="space-y-2">
                     {specializations.map(s => (
                       <div key={s.spec_id} className="flex items-center justify-between border-b border-border p-2">
@@ -947,6 +1070,9 @@ export default function ExaminerPanel() {
               {active === 'Subjects' && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
                   <Button onClick={() => setEditingSubject({ subject_code: '', subject_short_name: '', subject_full_name: '', semester: undefined, spec_id: undefined })} className="mb-4"><Plus className="size-4" />Add Subject</Button>
+                  <div className="mb-4">
+                    <div className="rounded-lg border bg-card p-3 mb-4"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold text-foreground">Import/Export Subjects</h3><div className="flex gap-2"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.subject_code) continue; try { await request('/api/subjects', {method: 'POST', body: JSON.stringify({subject_code: row.subject_code, subject_short_name: row.subject_short_name || undefined, subject_full_name: row.subject_full_name || undefined, semester: row.semester ? Number(row.semester) : undefined, spec_id: row.spec_id ? Number(row.spec_id) : undefined, sub_subject_codes: row.sub_subject_codes || undefined})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import subject csv'); break } }; setNotice('Subject CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('subjects.csv', ['subject_code', 'sub_subject_codes', 'subject_short_name', 'subject_full_name', 'semester', 'spec_id'], subjects)}>Download CSV</Button></div></div></div>
+                  </div>
                   <div className="space-y-2">
                     {subjects.map(s => (
                       <div key={s.subject_code} className="flex items-center justify-between border-b border-border p-2">
@@ -967,6 +1093,11 @@ export default function ExaminerPanel() {
               {active === 'Faculty' && (
                 <div className="space-y-4">
                   <FacultyListTable fac={filtered} q={query} setQ={setQuery} onSel={setSelected} onExp={() => window.open(`${API}/api/faculty-export?token=${sessionToken()}`, '_blank')} onAdd={() => setEditing({ PAN: '', inst_short_name: '' })} onCreateCredential={() => {}} canCreateCredential={false} />
+                  
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <h3 className="mb-3 text-lg font-semibold text-foreground">Import/Export Faculty</h3>
+                    <div className="flex gap-2 mb-3"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); for (const row of records) { if (!row.PAN) continue; try { await request('/api/faculty', {method: 'POST', body: JSON.stringify({PAN: row.PAN, Title: row.Title || undefined, faculty_name: row.faculty_name || undefined, inst_short_name: row.inst_short_name || undefined, faculty_desig: row.faculty_desig || undefined, faculty_total_exp: row.faculty_total_exp ? Number(row.faculty_total_exp) : undefined, faculty_address: row.faculty_address || undefined, faculty_Email: row.faculty_Email || undefined, faculty_MobileNo: row.faculty_MobileNo || undefined})})} catch (e) { setError(e instanceof Error ? e.message : 'Unable to import faculty csv'); break } }; setNotice('Faculty CSV imported successfully.'); await loadData(); event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'Title', 'faculty_name', 'inst_short_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo'], faculty)}>Download CSV</Button></div>
+                  </div>
 
                   <div className="rounded-lg border bg-card p-4">
                     <h3 className="mb-3 text-lg font-semibold text-foreground">Create Faculty Credential</h3>
@@ -987,6 +1118,97 @@ export default function ExaminerPanel() {
                         className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground md:max-w-48"
                       />
                       <Button onClick={() => saveCredential('FAC', facCredential)} disabled={!facCredential.user_name || facCredential.password.length < 8}>Create</Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {active === 'Credentials' && (
+                <div className="space-y-4">
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <h3 className="mb-3 text-lg font-semibold text-foreground">User Credentials Filter</h3>
+                    <div className="mb-4 flex gap-2">
+                      {(['ALL', 'CA', 'FAC'] as const).map(filter => (
+                        <Button key={filter} variant={credentialFilter === filter ? 'default' : 'outline'} size="sm" onClick={() => setCredentialFilter(filter)}>
+                          {filter === 'ALL' ? 'All Users' : filter === 'CA' ? 'College Admins' : 'Faculty'}
+                        </Button>
+                      ))}
+                    </div>
+                    <div className="mb-4">
+                      <div className="flex gap-2 mb-3"><label className="inline-flex cursor-pointer items-center rounded border border-input bg-background px-2 py-1 text-sm"><input type="file" accept=".csv" className="hidden" onChange={async (event) => {const file = event.target.files?.[0]; if (!file) return; const text = await file.text(); const records = parseCsvRecords(text); if (!records.length) { setError('CSV file is empty or invalid.'); return }; setError(''); try { await importCredentialCsv(records) } catch (e) { setError(e instanceof Error ? e.message : 'Unable to import credential csv') }; event.target.value = ''}} />Upload CSV</label><Button variant="outline" size="sm" onClick={() => downloadCsv('credentials.csv', ['user_name', 'role'], visibleUsers)}>Download CSV</Button></div>
+                    </div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b bg-muted">
+                            <th className="p-2 text-left text-foreground">Username</th>
+                            <th className="p-2 text-left text-foreground">Role</th>
+                            <th className="p-2 text-right text-foreground">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {visibleUsers.map(u => (
+                            <tr key={`${u.user_name}-${u.role}`} className="border-b">
+                              <td className="p-2 font-mono text-foreground">{u.user_name}</td>
+                              <td className="p-2 text-foreground">{u.role === 'CA' ? 'College Admin' : u.role === 'FAC' ? 'Faculty' : 'Central Examiner'}</td>
+                              <td className="p-2 text-right">
+                                {u.role !== 'CE' && (
+                                  <Button variant="outline" size="sm" className="text-red-600" onClick={() => deleteCredential(u.user_name, u.role)}>Revoke</Button>
+                                )}
+                              </td>
+                            </tr>
+                          ))}
+                          {visibleUsers.length === 0 && <tr><td colSpan={3} className="p-4 text-center text-muted-foreground">No credentials found.</td></tr>}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <h3 className="mb-3 text-lg font-semibold text-foreground">Create Credential</h3>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div>
+                        <p className="mb-3 text-sm text-muted-foreground">Create College Admin credential for an institute.</p>
+                        <div className="flex flex-col gap-3">
+                          <select
+                            value={caCredential.user_name}
+                            onChange={e => setCaCredential({ ...caCredential, user_name: e.target.value })}
+                            className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground"
+                          >
+                            <option value="">Select Institute</option>
+                            {institutes.map(i => <option key={i.inst_short_name} value={i.inst_short_name}>{i.inst_short_name} - {i.inst_full_name}</option>)}
+                          </select>
+                          <input
+                            value={caCredential.password}
+                            onChange={e => setCaCredential({ ...caCredential, password: e.target.value })}
+                            placeholder="Password (min 8 chars)"
+                            type="password"
+                            className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground"
+                          />
+                          <Button onClick={() => saveCredential('CA', caCredential)} disabled={busy || !caCredential.user_name || caCredential.password.length < 8}>Create CA Credential</Button>
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-3 text-sm text-muted-foreground">Create Faculty credential for a faculty member.</p>
+                        <div className="flex flex-col gap-3">
+                          <select
+                            value={facCredential.user_name}
+                            onChange={e => setFacCredential({ ...facCredential, user_name: e.target.value })}
+                            className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground"
+                          >
+                            <option value="">Select Faculty PAN</option>
+                            {faculty.map(f => <option key={f.PAN} value={f.PAN}>{f.PAN} - {f.faculty_name || 'Faculty'}</option>)}
+                          </select>
+                          <input
+                            value={facCredential.password}
+                            onChange={e => setFacCredential({ ...facCredential, password: e.target.value })}
+                            placeholder="Password (min 8 chars)"
+                            type="password"
+                            className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground"
+                          />
+                          <Button onClick={() => saveCredential('FAC', facCredential)} disabled={busy || !facCredential.user_name || facCredential.password.length < 8}>Create Faculty Credential</Button>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
