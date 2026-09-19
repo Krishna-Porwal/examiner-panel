@@ -4,12 +4,13 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -k -n next,api -c blue,green \"next dev\" \"tsx server/index.ts\"",
-    "predev": "prisma generate",
-    "build": "prisma generate && next build",
+    "predev": "npm run prisma:clean && prisma generate",
+    "build": "npm run prisma:clean && prisma generate && next build",
     "start": "next start",
-    "api:dev": "prisma generate && tsx server/index.ts",
+    "api:dev": "npm run prisma:clean && prisma generate && tsx server/index.ts",
     "api:build": "tsc -p server/tsconfig.json",
     "api:start": "node server/dist/index.js",
+    "prisma:clean": "node scripts/prisma-clean.js",
     "prisma:generate": "prisma generate",
     "prisma:validate": "prisma format",
     "prisma:seed": "tsx prisma/seed.ts"
