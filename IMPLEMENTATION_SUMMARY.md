@@ -11,30 +11,30 @@ Added bulk data upload and download capabilities for the following data types:
 #### Specializations
 - **Upload CSV**: Import multiple specialization records with `spec_id` and `spec_name`
 - **Download CSV**: Export all current specializations to CSV format
-- Located in: **Central Examiner → Specializations** tab
+- Located in: **Programme Coordinator → Specializations** tab
 
 #### Subjects  
 - **Upload CSV**: Import subject records with code, names, semester, and specialization mappings
 - **Download CSV**: Export all subjects with complete details
 - Supported columns: `subject_code`, `sub_subject_codes`, `subject_short_name`, `subject_full_name`, `semester`, `spec_id`
-- Located in: **Central Examiner → Subjects** tab
+- Located in: **Programme Coordinator → Subjects** tab
 
 #### Faculty
 - **Upload CSV**: Bulk import faculty records with complete profile information
 - **Download CSV**: Export faculty roster with all profile data
 - Supported columns: `PAN`, `Title`, `faculty_name`, `inst_short_name`, `faculty_desig`, `faculty_total_exp`, `faculty_address`, `faculty_Email`, `faculty_MobileNo`
-- Located in: **Central Examiner/College Admin → Faculty** tab
+- Located in: **Programme Coordinator/College Admin → Faculty** tab
 
 #### Credentials
 - **Upload CSV**: Bulk import user credentials with intelligent role detection
 - **Download CSV**: Export credentials filtered by role category
 - Supported columns: `user_name`, `role` (supports flexible role naming: CA/FAC/College Admin/Faculty, etc.)
 - Features role filter selector to view CA-only, Faculty-only, or All credentials
-- Located in: **Central Examiner/College Admin → Credentials** tab (NEW)
+- Located in: **Programme Coordinator/College Admin → Credentials** tab (NEW)
 
 ### 2. **Credentials Management Tab**
 
-Added new **Credentials** navigation item for both Central Examiner and College Admin roles.
+Added new **Credentials** navigation item for both Programme Coordinator and College Admin roles.
 
 #### Features:
 - **Role-based Filtering**: Toggle between "All Users", "College Admins", and "Faculty" views
@@ -88,7 +88,7 @@ No database schema changes required. All improvements work within the existing 1
 - Can manage credentials for their own institute  
 - Can filter and download credentials
 
-#### CE (Central Examiner) View:
+#### CE (Programme Coordinator) View:
 - Full access to all bulk operations
 - Can manage all credentials system-wide
 - Can filter credentials by type

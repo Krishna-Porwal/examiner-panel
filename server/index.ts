@@ -453,5 +453,125 @@ app.delete('/api/institutes/:inst_short_name', auth, allow('CE'), async (req: Au
   }
 })
 
-app.use((error: unknown, _req: Request, res: Response, _next: NextFunction) => { console.error('[v0] API error', error); return res.status(400).json({ error: error instanceof Error ? error.message : 'Unexpected server error' }) })
-app.listen(port, () => console.log(`[v0] Examiner API listening on ${port}`))
+// SEARCH ENDPOINT - role-scoped
+app.get('/api/search', auth, async (req: AuthedRequest, res) => {
+  const q = String(req.query.q ?? '').trim()
+  if (!q) return res.json({ institutes: [], courses: [], subjects: [], faculty: [] })
+
+  try {
+    const courseWhere = { OR: [{ course_code: { contains: q } }, { course_short_name: { contains: q } }, { course_full_name: { contains: q } }] }
+    const subjectWhere = { OR: [{ subject_code: { contains: q } }, { subject_short_name: { contains: q } }, { subject_full_name: { contains: q } }] }
+    const facultyWhereBase = { OR: [{ PAN: { contains: q } }, { faculty_name: { contains: q } }, { faculty_desig: { contains: q } }, { faculty_Email: { contains: q } }] }
+
+    const institutes = await prisma.institute.findMany({ where: { OR: [{ inst_short_name: { contains: q } }, { inst_full_name: { contains: q } }] }, take: 50 })
+    const courses = await prisma.course.findMany({ where: courseWhere, take: 50 })
+    const subjects = await prisma.subject.findMany({ where: subjectWhere, take: 50 })
+
+    // Faculty must be scoped for CA/FAC
+    const facultyWhere: any = { AND: [facultyWhereBase] }
+    if (req.session?.role === 'CA' || req.session?.role === 'FAC') facultyWhere.AND.push({ inst_short_name: req.session?.institute })
+    const faculty = await prisma.faculty.findMany({ where: facultyWhere, take: 200 })
+
+    return res.json({ institutes, courses, subjects, faculty })
+  } catch (err) {
+    console.error('Search error', err)
+    return res.status(500).json({ error: 'Search failed' })
+  }
+})
+
+// COURSE DETAILS - analytics
+app.get('/api/courses/:course_code/details', auth, async (req: AuthedRequest, res) => {
+  const courseCode = String(req.params.course_code)
+  const course = await prisma.course.findUnique({ where: { course_code: courseCode } })
+  if (!course) return res.status(404).json({ error: 'Course not found' })
+
+  // If CA or FAC, restrict to their institute
+  const instFilter = req.session?.role === 'CE' ? {} : { inst_short_name: req.session?.institute }
+
+  const institutesOffering = await prisma.instCourse.findMany({ where: { course_code: courseCode, ...instFilter }, include: { institute: true } })
+  const subjects = await prisma.courseSubject.findMany({ where: { course_code: courseCode }, include: { subject: true } })
+  const subjectCodes = subjects.map(s => s.subject_code)
+
+  // Count distinct faculty teaching any subject in this course
+  let facultyRows: any[] = []
+  if (subjectCodes.length > 0) {
+    facultyRows = await prisma.faculty.findMany({ where: { subjects: { some: { subject_code: { in: subjectCodes } } }, ...(req.session?.role === 'CE' ? {} : { inst_short_name: req.session?.institute }) } })
+  }
+
+  return res.json({ course, institutesOffering: institutesOffering.map(r => r.institute), subjects: subjects.map(s => s.subject), facultyCount: facultyRows.length, faculty: facultyRows })
+})
+
+// SUBJECT DETAILS - analytics
+app.get('/api/subjects/:subject_code/details', auth, async (req: AuthedRequest, res) => {
+  const subjectCode = String(req.params.subject_code)
+  const subject = await prisma.subject.findUnique({ where: { subject_code: subjectCode } })
+  if (!subject) return res.status(404).json({ error: 'Subject not found' })
+
+  const courseMappings = await prisma.courseSubject.findMany({ where: { subject_code: subjectCode }, include: { course: true } })
+  const courseCodes = courseMappings.map(c => c.course_code)
+
+  // Institutes where those courses are available (respect role scope)
+  const instWhere: any = { course_code: { in: courseCodes } }
+  if (req.session?.role !== 'CE') instWhere.inst_short_name = req.session?.institute
+  const instCourses = await prisma.instCourse.findMany({ where: instWhere, include: { institute: true } })
+  const institutes = instCourses.map(ic => ic.institute)
+
+  // Faculty who teach this subject
+  const facultyWhere: any = { subjects: { some: { subject_code: subjectCode } } }
+  if (req.session?.role !== 'CE') facultyWhere.inst_short_name = req.session?.institute
+  const facultyRows = await prisma.faculty.findMany({ where: facultyWhere })
+
+  return res.json({ subject, courses: courseMappings.map(c => c.course), institutes, instituteCount: new Set(institutes.map(i => i.inst_short_name)).size, facultyCount: facultyRows.length, faculty: facultyRows })
+})
+
+// INSTITUTE DETAILS - analytics
+app.get('/api/institutes/:inst_short_name/details', auth, async (req: AuthedRequest, res) => {
+  const inst = String(req.params.inst_short_name)
+  if (req.session?.role === 'CA' && inst !== req.session.institute) return res.status(404).json({ error: 'Institute not found' })
+  if (req.session?.role === 'FAC' && inst !== req.session.institute) return res.status(404).json({ error: 'Institute not found' })
+
+  const institute = await prisma.institute.findUnique({ where: { inst_short_name: inst } })
+  if (!institute) return res.status(404).json({ error: 'Institute not found' })
+
+  const instCourses = await prisma.instCourse.findMany({ where: { inst_short_name: inst }, include: { course: true } })
+  const courseCodes = instCourses.map(ic => ic.course_code)
+  const subjects = await prisma.courseSubject.findMany({ where: { course_code: { in: courseCodes } }, include: { subject: true } })
+  const facultyRows = await prisma.faculty.findMany({ where: { inst_short_name: inst } })
+
+  const courseStats = await Promise.all(instCourses.map(async (ic) => {
+    const subs = await prisma.courseSubject.findMany({ where: { course_code: ic.course_code }, include: { subject: true } })
+    const facultyForCourse = await prisma.faculty.findMany({ where: { subjects: { some: { subject: { courses: { some: { course_code: ic.course_code } } } } }, inst_short_name: inst } })
+    return { course: ic.course, intake: ic.intake, strength: ic.strength, subjects: subs.map(s => s.subject), facultyCount: facultyForCourse.length, faculty: facultyForCourse }
+  }))
+
+  return res.json({ institute, courses: instCourses.map(ic => ic.course), facultyCount: facultyRows.length, subjects: subjects.map(s => s.subject), courseStats })
+})
+
+// Catch all errors
+process.on('uncaughtException', (error) => {
+  console.error('[v0] Uncaught exception:', error)
+})
+
+process.on('unhandledRejection', (reason) => {
+  console.error('[v0] Unhandled rejection:', reason)
+})
+
+// Start the HTTP server
+const httpServer = app.listen(port, async () => {
+  console.log(`[v0] Examiner API listening on ${port}`)
+  try {
+    // Try a test query to ensure DB connection is working
+    const count = await prisma.user.count()
+    console.log(`[v0] Database connected, users count: ${count}`)
+  } catch (err) {
+    console.error('[v0] Database connection error:', err)
+  }
+})
+
+// Handle server errors
+httpServer.on('error', (error) => {
+  console.error('[v0] Server error:', error)
+})
+
+// Make sure the HTTP server keeps process alive
+httpServer.ref()

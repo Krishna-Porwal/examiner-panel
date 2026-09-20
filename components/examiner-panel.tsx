@@ -27,7 +27,7 @@ type UserPayload = { user_name: string; password: string; role: 'CA' | 'FAC' }
 type UserCredential = { user_name: string; role: string }
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000'
-const demoCredentials = [['Central Examiner', 'CENTRAL', 'change-me'], ['College Admin', 'NIT', 'college123'], ['Faculty', 'ABCDE1234F', 'faculty123']] as const
+const demoCredentials = [['Programme Coordinator', 'CENTRAL', 'change-me'], ['College Admin', 'NIT', 'college123'], ['College User', 'ABCDE1234F', 'faculty123']] as const
 
 function normalizeUserName(value: string) {
   return value.trim().replace(/\s+/g, '').toUpperCase()
@@ -96,7 +96,7 @@ function downloadCsv(filename: string, headers: string[], rows: Record<string, a
   link.click()
   URL.revokeObjectURL(url)
 }
-const roleLabels: Record<string, string> = { CE: 'Central Examiner', CA: 'College Admin', FAC: 'Faculty' }
+const roleLabels: Record<string, string> = { CE: 'Programme Coordinator', CA: 'College Admin', FAC: 'College User' }
 const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['My Profile', 'Courses', 'Subjects', 'Faculty', 'My Subjects', 'My Specializations', 'Users'] }
 const IPU_ENGINEERING_COURSE_CODES = new Set(['BTE', 'MTE', 'CSE', 'ECE', 'EEE', 'ME', 'CE', 'IT', 'CHE', 'EIE'])
 const NON_ENGINEERING_COURSE_TOKENS = ['bba', 'mba', 'bca', 'ba', 'b.com', 'law', 'pharmacy', 'medical', 'mbbs', 'commerce', 'management']
@@ -127,6 +127,96 @@ function FacultyListTable({ fac, q, setQ, onSel, onExp, onAdd, onCreateCredentia
 
 function FacultyDialog({ fac, onClose, onEdit }: any) {
   return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{fac?.faculty_name || 'Faculty'}</h2><button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-2 text-sm mb-4 text-foreground"><div><strong>PAN:</strong> {fac?.PAN}</div><div><strong>Email:</strong> {fac?.faculty_Email}</div><div><strong>Designation:</strong> {fac?.faculty_desig}</div><div><strong>Institute:</strong> {fac?.inst_short_name}</div><div><strong>Experience:</strong> {fac?.faculty_total_exp ?? '-'} years</div><div><strong>Mobile:</strong> {fac?.faculty_MobileNo ?? '-'}</div></div><div className="flex gap-2 justify-end"><Button variant="outline" onClick={onClose}>Close</Button><Button onClick={onEdit}>Edit</Button></div></div></div>
+}
+
+function CourseDetailsModal({ details, onClose }: any) {
+  if (!details) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="w-full max-w-4xl rounded-lg border bg-card p-6 shadow-lg overflow-auto max-h-[80vh]">
+        <div className="mb-4 flex justify-between items-start">
+          <h2 className="text-lg font-semibold text-foreground">{details.course.course_code} — {details.course.course_full_name || details.course.course_short_name}</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-3 mb-4">
+          <div className="col-span-2">
+            <div className="mb-3"><strong>Colleges Offering:</strong> {details.institutesOffering?.length ?? 0}</div>
+            <div className="mb-3"><strong>Subjects:</strong> {details.subjects?.length ?? 0}</div>
+            <div className="mb-3"><strong>Faculty:</strong> {details.facultyCount ?? 0}</div>
+            <div className="mt-4">
+              <h3 className="text-sm font-semibold">Subjects</h3>
+              <div className="space-y-2 mt-2">{(details.subjects ?? []).map((s: any) => <div key={s.subject_code} className="rounded border p-2"><div className="font-medium">{s.subject_code} — {s.subject_full_name || s.subject_short_name}</div></div>)}</div>
+            </div>
+          </div>
+          <div>
+            <h3 className="text-sm font-semibold">Colleges</h3>
+            <div className="space-y-2 mt-2">{(details.institutesOffering ?? []).map((i: any) => <div key={i.inst_short_name} className="rounded border p-2">{i.inst_short_name} — {i.inst_full_name}</div>)}</div>
+          </div>
+        </div>
+        <div>
+          <h3 className="text-sm font-semibold">Faculty (sample)</h3>
+          <div className="mt-2 space-y-2">{(details.faculty ?? []).slice(0, 200).map((f: any) => <div key={f.PAN} className="rounded border p-2">{f.faculty_name} — {f.PAN} — {f.inst_short_name}</div>)}</div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function SubjectDetailsModal({ details, onClose }: any) {
+  if (!details) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="w-full max-w-3xl rounded-lg border bg-card p-6 shadow-lg overflow-auto max-h-[80vh]">
+        <div className="mb-4 flex justify-between items-start">
+          <h2 className="text-lg font-semibold text-foreground">{details.subject.subject_code} — {details.subject.subject_full_name || details.subject.subject_short_name}</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <div className="mb-2"><strong>Semester:</strong> {details.subject.semester ?? '-'}</div>
+            <div className="mb-2"><strong>Courses:</strong>
+              <div className="mt-2 space-y-2">{(details.courses ?? []).map((c: any) => <div key={c.course_code} className="rounded border p-2">{c.course_code} — {c.course_full_name || c.course_short_name}</div>)}</div>
+            </div>
+          </div>
+          <div>
+            <div className="mb-2"><strong>Available in Colleges:</strong> {details.instituteCount ?? (details.institutes ?? []).length}</div>
+            <div className="mt-2 space-y-2">{(details.institutes ?? []).map((i: any) => <div key={i.inst_short_name} className="rounded border p-2">{i.inst_short_name} — {i.inst_full_name}</div>)}</div>
+          </div>
+        </div>
+        <div className="mt-4"><h3 className="text-sm font-semibold">Faculty</h3><div className="mt-2 space-y-2">{(details.faculty ?? []).slice(0,200).map((f: any) => <div key={f.PAN} className="rounded border p-2">{f.faculty_name} — {f.PAN} — {f.inst_short_name}</div>)}</div></div>
+      </div>
+    </div>
+  )
+}
+
+function InstituteDetailsModal({ details, onClose }: any) {
+  if (!details) return null
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <div className="w-full max-w-4xl rounded-lg border bg-card p-6 shadow-lg overflow-auto max-h-[80vh]">
+        <div className="mb-4 flex justify-between items-start">
+          <h2 className="text-lg font-semibold text-foreground">{details.institute.inst_short_name} — {details.institute.inst_full_name}</h2>
+          <button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+        </div>
+        <div className="grid gap-4 md:grid-cols-2">
+          <div>
+            <div className="mb-2"><strong>Address:</strong> {details.institute.inst_Address1 ?? ''} {details.institute.inst_Address2 ?? ''}</div>
+            <div className="mb-2"><strong>District / State:</strong> {details.institute.inst_District ?? '-'} / {details.institute.inst_State ?? '-'}</div>
+            <div className="mb-2"><strong>Director:</strong> {details.institute.Director_Name ?? '-'} — {details.institute.Director_Email ?? ''}</div>
+            <div className="mb-2"><strong>Exam Head:</strong> {details.institute.ExamHead_Name ?? '-'} — {details.institute.ExamHead_Email ?? ''}</div>
+          </div>
+          <div>
+            <div className="mb-2"><strong>Courses Offered:</strong></div>
+            <div className="mt-2 space-y-2">{(details.courseStats ?? details.courses ?? []).map((c: any) => {
+              const course = c?.course ?? c
+              return <div key={course?.course_code} className="rounded border p-2">{course?.course_code} — {course?.course_full_name || course?.course_short_name}</div>
+            })}</div>
+          </div>
+        </div>
+        <div className="mt-4"><h3 className="text-sm font-semibold">Faculty ({details.facultyCount ?? 0})</h3><div className="mt-2 space-y-2">{(details.faculty ?? []).slice(0,200).map((f: any) => <div key={f.PAN} className="rounded border p-2">{f.faculty_name} — {f.PAN}</div>)}</div></div>
+      </div>
+    </div>
+  )
 }
 
 function FacultyForm({ fac, onClose, onSubmit, role }: any) {
@@ -194,6 +284,14 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [courseSubjectMappings, setCourseSubjectMappings] = useState<CourseSubjectMap[]>([])
   const [selected, setSelected] = useState<Faculty | null>(null)
   const [query, setQuery] = useState('')
+  const [searchResults, setSearchResults] = useState<any | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [showCourseDetails, setShowCourseDetails] = useState(false)
+  const [showSubjectDetails, setShowSubjectDetails] = useState(false)
+  const [showInstituteDetails, setShowInstituteDetails] = useState(false)
+  const [courseDetails, setCourseDetails] = useState<any | null>(null)
+  const [subjectDetails, setSubjectDetails] = useState<any | null>(null)
+  const [instituteDetails, setInstituteDetails] = useState<any | null>(null)
   const [userSearch, setUserSearch] = useState('')
   const [instituteSearch, setInstituteSearch] = useState('')
   const [courseSearch, setCourseSearch] = useState('')
@@ -271,6 +369,57 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       setError(e instanceof Error ? e.message : 'Failed to load data')
     }
   }
+
+    async function doSearch(q?: string) {
+      const term = typeof q === 'string' ? q : query
+      if (!term || term.trim().length === 0) {
+        setSearchResults(null)
+        return
+      }
+      setSearching(true)
+      setError('')
+      try {
+        const res = await request(`/api/search?q=${encodeURIComponent(term)}`)
+        setSearchResults(res)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Search failed')
+      } finally {
+        setSearching(false)
+      }
+    }
+
+    async function openCourseDetails(courseCode: string) {
+      try {
+        setCourseDetails(null)
+        const details = await request(`/api/courses/${encodeURIComponent(courseCode)}/details`)
+        setCourseDetails(details)
+        setShowCourseDetails(true)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load course details')
+      }
+    }
+
+    async function openSubjectDetails(subjectCode: string) {
+      try {
+        setSubjectDetails(null)
+        const details = await request(`/api/subjects/${encodeURIComponent(subjectCode)}/details`)
+        setSubjectDetails(details)
+        setShowSubjectDetails(true)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load subject details')
+      }
+    }
+
+    async function openInstituteDetails(instShortName: string) {
+      try {
+        setInstituteDetails(null)
+        const details = await request(`/api/institutes/${encodeURIComponent(instShortName)}/details`)
+        setInstituteDetails(details)
+        setShowInstituteDetails(true)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to load institute details')
+      }
+    }
 
   const visibleInstitutes = useMemo(() => {
     const scoped = session?.role === 'CA' ? institutes.filter(item => item.inst_short_name === session.institute) : institutes
@@ -1007,7 +1156,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         <div className="flex h-20 items-center gap-3 border-b border-sidebar-border px-5">
           <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground"><ShieldCheck className="size-5" /></div>
           <div>
-            <p className="font-semibold text-sidebar-foreground">Examiner</p>
+            <p className="font-semibold text-sidebar-foreground">Panel of Examiner Management System</p>
             <p className="text-xs text-sidebar-foreground/80">{roleLabels[session.role]}</p>
           </div>
           <button className="ml-auto lg:hidden text-sidebar-foreground" onClick={() => setSidebarOpen(false)}><X /></button>
@@ -1048,6 +1197,46 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         <div className="p-8">
           <ErrorAlert msg={error} />
           <SuccessAlert msg={notice} />
+
+          {/* Prominent role-aware global/college search */}
+          <div className="mb-6">
+            <div className="flex gap-2">
+              <input
+                value={query}
+                onChange={e => setQuery(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') doSearch() }}
+                placeholder={session?.role === 'CE' ? 'Search colleges, courses, subjects or faculty...' : session?.role === 'CA' ? 'Search faculty, courses or subjects in your college...' : 'Search faculty or subjects...'}
+                className="flex-1 rounded border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground"
+              />
+              <Button onClick={() => doSearch()} disabled={searching}>{searching ? 'Searching...' : 'Search'}</Button>
+              <Button variant="outline" onClick={() => { setQuery(''); setSearchResults(null); }}>{'Clear'}</Button>
+            </div>
+
+            {searchResults && (
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <div className="rounded-lg border bg-card p-4">
+                  <h3 className="font-semibold">Institutes</h3>
+                  <div className="mt-2 space-y-2">
+                    {(searchResults.institutes ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No institutes found.</div> : (searchResults.institutes ?? []).map((i: any) => <div key={i.inst_short_name} className="p-2 rounded hover:bg-muted" onClick={() => openInstituteDetails(i.inst_short_name)}>{i.inst_short_name} — {i.inst_full_name}</div>)}
+                  </div>
+                </div>
+                <div className="space-y-4">
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="font-semibold">Courses</h3>
+                    <div className="mt-2 space-y-2">{(searchResults.courses ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No courses found.</div> : (searchResults.courses ?? []).map((c: any) => <div key={c.course_code} className="p-2 rounded hover:bg-muted cursor-pointer" onClick={() => openCourseDetails(c.course_code)}>{c.course_code} — {c.course_full_name || c.course_short_name}</div>)}</div>
+                  </div>
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="font-semibold">Subjects</h3>
+                    <div className="mt-2 space-y-2">{(searchResults.subjects ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No subjects found.</div> : (searchResults.subjects ?? []).map((s: any) => <div key={s.subject_code} className="p-2 rounded hover:bg-muted cursor-pointer" onClick={() => openSubjectDetails(s.subject_code)}>{s.subject_code} — {s.subject_full_name || s.subject_short_name}</div>)}</div>
+                  </div>
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="font-semibold">Faculty</h3>
+                    <div className="mt-2 space-y-2">{(searchResults.faculty ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No faculty found.</div> : (searchResults.faculty ?? []).map((f: any) => <div key={f.PAN} className="p-2 rounded hover:bg-muted cursor-pointer" onClick={() => setSelected(f)}>{f.faculty_name || f.PAN} — {f.PAN} — {f.inst_short_name}</div>)}</div>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
 
           {isFaculty ? (
             <>
@@ -1460,6 +1649,9 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       {editingCourse && <CourseForm course={editingCourse} onClose={() => setEditingCourse(null)} onSubmit={saveCourse} />}
       {editingSpec && <SpecializationForm item={editingSpec} onClose={() => setEditingSpec(null)} onSubmit={saveSpecialization} />}
       {editingSubject && <SubjectForm item={editingSubject} onClose={() => setEditingSubject(null)} onSubmit={saveSubject} specializations={specializations} />}
+      {showCourseDetails && <CourseDetailsModal details={courseDetails} onClose={() => { setShowCourseDetails(false); setCourseDetails(null) }} />}
+      {showSubjectDetails && <SubjectDetailsModal details={subjectDetails} onClose={() => { setShowSubjectDetails(false); setSubjectDetails(null) }} />}
+      {showInstituteDetails && <InstituteDetailsModal details={instituteDetails} onClose={() => { setShowInstituteDetails(false); setInstituteDetails(null) }} />}
       {showPasswordChange && (
         <PasswordChange
           token={token}

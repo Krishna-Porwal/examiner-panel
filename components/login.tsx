@@ -50,7 +50,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
     <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4">
       <div className="w-full max-w-md bg-white rounded-lg shadow-lg p-8">
         <h1 className="text-3xl font-bold text-center mb-2 text-foreground">
-          Academic Management System
+          Panel of Examiner Management System
         </h1>
         <p className="text-center text-sm text-muted-foreground mb-8">
           Examination Management Portal
@@ -67,14 +67,14 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               onChange={(e) => setRole(e.target.value as 'CE' | 'CA' | 'FAC')}
               className="w-full rounded border border-input bg-background px-3 py-2 text-foreground text-sm"
             >
-              <option value="CE">Central Examiner (CE)</option>
+              <option value="CE">Programme Coordinator (CE)</option>
               <option value="CA">College Admin (CA)</option>
-              <option value="FAC">Faculty (FAC)</option>
+              <option value="FAC">College User (FAC)</option>
             </select>
             <p className="text-xs text-muted-foreground mt-1">
-              {role === 'CE' && 'Create and manage all system data'}
-              {role === 'CA' && 'Manage institute data and faculty'}
-              {role === 'FAC' && 'Manage your own profile and assignments'}
+              {role === 'CE' && 'Programme Coordinator: create and manage global data'}
+              {role === 'CA' && 'College Admin: manage your institute and faculty'}
+              {role === 'FAC' && 'College User: manage your profile and institute faculty'}
             </p>
           </div>
 
@@ -88,11 +88,11 @@ export default function Login({ onLoginSuccess }: LoginProps) {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               placeholder={
-                role === 'CE'
-                  ? 'Enter CE username'
+                  role === 'CE'
+                  ? 'Enter Programme Coordinator username'
                   : role === 'CA'
                     ? 'Enter institute short name'
-                    : 'Enter faculty PAN'
+                    : 'Enter faculty PAN (your PAN)'
               }
               className="w-full rounded border border-input bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground text-sm"
               disabled={loading}

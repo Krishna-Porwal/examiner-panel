@@ -7,8 +7,8 @@ const geist = Geist({ subsets: ['latin'], variable: '--font-geist' })
 const geistMono = Geist_Mono({ subsets: ['latin'], variable: '--font-geist-mono' })
 
 export const metadata: Metadata = {
-  title: 'Examiner Panel | Academic Administration',
-  description: 'Secure administration for institutes, courses, subjects, faculty, and academic mappings.',
+  title: 'Panel of Examiner Management System',
+  description: 'Panel of Examiner Management System — administration for institutes, courses, subjects, faculty, and mappings.',
   generator: 'v0.app',
 }
 

@@ -3,8 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "concurrently -k -n next,api -c blue,green \"next dev\" \"tsx server/index.ts\"",
-    "predev": "npm run prisma:clean && prisma generate",
+    "dev": "concurrently -k -n next,api -c blue,green \"next dev\" \"npm run api:start\"",
+    "predev": "npm run prisma:clean && prisma generate && npm run api:build",
     "build": "npm run prisma:clean && prisma generate && next build",
     "start": "next start",
     "api:dev": "npm run prisma:clean && prisma generate && tsx server/index.ts",
