@@ -86,6 +86,8 @@ model InstCourse {
 model CourseSubject {
   course_code  String  @db.VarChar(3)
   subject_code String  @db.VarChar(10)
+  study_year   Int?    @db.TinyInt
+  semester     Int?    @db.TinyInt
   course       Course  @relation(fields: [course_code], references: [course_code])
   subject      Subject @relation(fields: [subject_code], references: [subject_code])
 

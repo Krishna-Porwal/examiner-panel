@@ -21,7 +21,7 @@ type Specialization = { spec_id: number; spec_name?: string }
 type FacultySubjectMap = { PAN: string; subject_code: string; entered_by?: string; entered_on?: string }
 type FacultySpecMap = { PAN: string; spec_id: number; entered_by?: string; entered_on?: string }
 type InstCourseMap = { inst_short_name: string; course_code: string; intake?: number; strength?: number }
-type CourseSubjectMap = { course_code: string; subject_code: string }
+type CourseSubjectMap = { course_code: string; subject_code: string; study_year?: number | null; semester?: number | null }
 
 type UserPayload = { user_name: string; password: string; role: 'CA' | 'FAC' }
 type UserCredential = { user_name: string; role: string }
@@ -145,7 +145,11 @@ function CourseDetailsModal({ details, onClose }: any) {
             <div className="mb-3"><strong>Faculty:</strong> {details.facultyCount ?? 0}</div>
             <div className="mt-4">
               <h3 className="text-sm font-semibold">Subjects</h3>
-              <div className="space-y-2 mt-2">{(details.subjects ?? []).map((s: any) => <div key={s.subject_code} className="rounded border p-2"><div className="font-medium">{s.subject_code} — {s.subject_full_name || s.subject_short_name}</div></div>)}</div>
+              <div className="space-y-2 mt-2">{(details.subjects ?? []).map((s: any) => {
+                const code = s.subject_code ?? s.subject?.subject_code
+                const short = s.subject_full_name ?? s.subject?.subject_full_name ?? s.subject_short_name ?? s.subject?.subject_short_name
+                return <div key={code} className="rounded border p-2"><div className="font-medium">{code} — {short} {s.study_year ? <span className="ml-2 text-xs text-muted-foreground">Year {s.study_year}</span> : null} {s.semester ? <span className="ml-2 text-xs text-muted-foreground">Sem {s.semester}</span> : null}</div></div>
+              })}</div>
             </div>
           </div>
           <div>
@@ -175,7 +179,12 @@ function SubjectDetailsModal({ details, onClose }: any) {
           <div>
             <div className="mb-2"><strong>Semester:</strong> {details.subject.semester ?? '-'}</div>
             <div className="mb-2"><strong>Courses:</strong>
-              <div className="mt-2 space-y-2">{(details.courses ?? []).map((c: any) => <div key={c.course_code} className="rounded border p-2">{c.course_code} — {c.course_full_name || c.course_short_name}</div>)}</div>
+              <div className="mt-2 space-y-2">{(details.courses ?? []).map((c: any) => {
+                const courseObj = c.course ?? c
+                const code = courseObj.course_code
+                const name = courseObj.course_full_name || courseObj.course_short_name
+                return <div key={code} className="rounded border p-2">{code} — {name} {c.study_year ? <span className="ml-2 text-xs text-muted-foreground">Year {c.study_year}</span> : null} {c.semester ? <span className="ml-2 text-xs text-muted-foreground">Sem {c.semester}</span> : null}</div>
+              })}</div>
             </div>
           </div>
           <div>
@@ -282,6 +291,8 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [facultySpecs, setFacultySpecs] = useState<FacultySpecMap[]>([])
   const [instCourseMappings, setInstCourseMappings] = useState<InstCourseMap[]>([])
   const [courseSubjectMappings, setCourseSubjectMappings] = useState<CourseSubjectMap[]>([])
+  const [showMappingModal, setShowMappingModal] = useState(false)
+  const [editingMapping, setEditingMapping] = useState<CourseSubjectMap | null>(null)
   const [selected, setSelected] = useState<Faculty | null>(null)
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any | null>(null)
@@ -289,6 +300,8 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [showCourseDetails, setShowCourseDetails] = useState(false)
   const [showSubjectDetails, setShowSubjectDetails] = useState(false)
   const [showInstituteDetails, setShowInstituteDetails] = useState(false)
+  const [showMappingDetails, setShowMappingDetails] = useState(false)
+  const [mappingDetails, setMappingDetails] = useState<any | null>(null)
   const [courseDetails, setCourseDetails] = useState<any | null>(null)
   const [subjectDetails, setSubjectDetails] = useState<any | null>(null)
   const [instituteDetails, setInstituteDetails] = useState<any | null>(null)
@@ -845,17 +858,29 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     }
   }
 
-  async function saveCourseSubject(req: { course_code: string; subject_code: string }) {
+  async function saveCourseSubject(req: { course_code: string; subject_code: string; study_year?: number | null; semester?: number | null }) {
     setBusy(true)
     setError('')
     setNotice('')
-    try {
-      await request('/api/course-subjects', {
-        method: 'POST',
-        body: JSON.stringify({ course_code: req.course_code, subject_code: req.subject_code }),
-      })
-      setNotice('Course-subject mapping created.')
+      try {
+      if (editingMapping) {
+        // Update existing mapping
+        await request(`/api/course-subjects/${encodeURIComponent(editingMapping.course_code)}/${encodeURIComponent(editingMapping.subject_code)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ study_year: req.study_year ?? null, semester: req.semester ?? null }),
+        })
+        setNotice('Course-subject mapping updated.')
+      } else {
+        // Create new mapping
+        await request('/api/course-subjects', {
+          method: 'POST',
+          body: JSON.stringify({ course_code: req.course_code, subject_code: req.subject_code, study_year: req.study_year ?? undefined, semester: req.semester ?? undefined }),
+        })
+        setNotice('Course-subject mapping created.')
+      }
       await loadData()
+      setShowMappingModal(false)
+      setEditingMapping(null)
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to create course-subject map')
     } finally {
@@ -875,6 +900,31 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     } finally {
       setBusy(false)
     }
+  }
+
+  async function openEditMapping(mapping: CourseSubjectMap) {
+    setEditingMapping(mapping)
+    setShowMappingModal(true)
+  }
+
+  async function openViewMapping(mapping: CourseSubjectMap) {
+    try {
+      setError('')
+      setMappingDetails(null)
+      // fetch course details which now returns mapping rows with study_year/semester
+      const details = await request(`/api/courses/${encodeURIComponent(mapping.course_code)}/details`)
+      // find the specific mapping row
+      const mappingRow = Array.isArray(details.subjects) ? details.subjects.find((s: any) => s.subject_code === mapping.subject_code) : null
+      setMappingDetails({ mapping: mappingRow, course: details.course, institutes: details.institutesOffering ?? [], faculty: details.faculty ?? [] })
+      setShowMappingDetails(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load mapping details')
+    }
+  }
+
+  async function openAddMapping() {
+    setEditingMapping(null)
+    setShowMappingModal(true)
   }
 
   async function deleteFaculty(pan: string) {
@@ -1095,7 +1145,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       const courseCode = String(row.course_code ?? row.courseCode ?? '').trim().toUpperCase()
       const subjectCode = String(row.subject_code ?? row.subjectCode ?? '').trim()
       if (!courseCode || !subjectCode) continue
-      await request('/api/course-subjects', { method: 'POST', body: JSON.stringify({ course_code: courseCode, subject_code: subjectCode }) })
+      await request('/api/course-subjects', { method: 'POST', body: JSON.stringify({ course_code: courseCode, subject_code: subjectCode, study_year: row.study_year ? Number(row.study_year) : undefined, semester: row.semester ? Number(row.semester) : undefined }) })
     }
     setNotice('Course-subject CSV imported successfully.')
     await loadData()
@@ -1492,6 +1542,39 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                 </div>
               )}
 
+              {/* Course-Subject mappings management (CE and CA) */}
+              {active === 'Courses' && (isCentralExaminer || session?.role === 'CA') && (
+                <div className="rounded-lg border bg-card p-4 text-foreground mt-4">
+                  <h3 className="text-lg font-semibold mb-4">Course - Subject Mappings</h3>
+                  <div className="mb-3 flex gap-2">
+                    <input value={courseSubjectSearch} onChange={e => setCourseSubjectSearch(e.target.value)} placeholder="Search mappings..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                    <Button variant="outline" size="sm" onClick={() => downloadCsv('course-subjects.csv', ['course_code', 'subject_code', 'study_year', 'semester'], visibleCourseSubjectMappings)}>CSV</Button>
+                    <input id="upload-course-subjects" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCourseSubjectsCsv)} className="hidden" />
+                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-course-subjects')?.click()}>Upload</Button>
+                    <Button size="sm" onClick={openAddMapping}>Add</Button>
+                  </div>
+
+                  <div className="space-y-2">{visibleCourseSubjectMappings.length === 0 ? <p className="text-sm text-muted-foreground">No mappings found.</p> : visibleCourseSubjectMappings.map(mapping => {
+                    const courseObj = courses.find(c => c.course_code === mapping.course_code)
+                    const subjectObj = subjects.find(s => s.subject_code === mapping.subject_code)
+                    return (
+                      <div key={`${mapping.course_code}-${mapping.subject_code}`} className="flex items-center justify-between rounded border p-3">
+                        <div>
+                          <div className="font-medium">{mapping.course_code} → {mapping.subject_code}</div>
+                          <div className="text-sm text-muted-foreground">{courseObj?.course_full_name || courseObj?.course_short_name} • {subjectObj?.subject_full_name || subjectObj?.subject_short_name}</div>
+                          <div className="text-sm text-muted-foreground">Year: {mapping.study_year ?? 'Not Set'} • Sem: {mapping.semester ?? 'Not Set'}</div>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button size="sm" variant="outline" onClick={() => openViewMapping(mapping)}>View</Button>
+                          <Button size="sm" variant="outline" onClick={() => openEditMapping(mapping)}>Edit</Button>
+                          <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCourseSubject(mapping.course_code, mapping.subject_code)}>Delete</Button>
+                        </div>
+                      </div>
+                    )
+                  })}</div>
+                </div>
+              )}
+
               {active === 'Specializations' && isCentralExaminer && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
                   <div className="mb-4 flex gap-2">
@@ -1663,6 +1746,108 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
             setTimeout(() => signOut(), 1500)
           }}
         />
+      )}
+
+      {showMappingModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <form onSubmit={async (e) => {
+            e.preventDefault()
+            const fd = new FormData(e.currentTarget as HTMLFormElement)
+            const course_code = String(fd.get('course_code') ?? '').trim().toUpperCase()
+            const subject_code = String(fd.get('subject_code') ?? '').trim()
+            const study_year_raw = fd.get('study_year')
+            const semester_raw = fd.get('semester')
+            const study_year = study_year_raw === null || study_year_raw === '' ? undefined : Number(study_year_raw)
+            const semester = semester_raw === null || semester_raw === '' ? undefined : Number(semester_raw)
+            await saveCourseSubject({ course_code, subject_code, study_year: typeof study_year === 'number' ? study_year : null, semester: typeof semester === 'number' ? semester : null })
+          }} className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
+            <div className="mb-4 flex justify-between items-start">
+              <h2 className="text-lg font-semibold text-foreground">{editingMapping ? 'Edit' : 'Add'} Course - Subject Mapping</h2>
+              <button type="button" onClick={() => { setShowMappingModal(false); setEditingMapping(null) }} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+            </div>
+            <div className="grid gap-3 mb-4">
+                <label className="block"><span className="text-sm font-medium text-foreground">Course</span>
+                  <select name="course_code" defaultValue={editingMapping?.course_code ?? ''} required disabled={Boolean(editingMapping)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                    <option value="">Select course</option>
+                    {(session?.role === 'CA' ? visibleCourses.filter(c => visibleInstCourseMappings.some(m => m.inst_short_name === session.institute && m.course_code === c.course_code)) : visibleCourses).map(c => <option key={c.course_code} value={c.course_code}>{c.course_code} — {c.course_full_name || c.course_short_name}</option>)}
+                  </select>
+                  {editingMapping && <input type="hidden" name="course_code" value={editingMapping.course_code} />}
+                </label>
+
+              <label className="block"><span className="text-sm font-medium text-foreground">Subject</span>
+                <select name="subject_code" defaultValue={editingMapping?.subject_code ?? ''} required disabled={Boolean(editingMapping)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                  <option value="">Select subject</option>
+                  {subjects.map(s => <option key={s.subject_code} value={s.subject_code}>{s.subject_code} — {s.subject_full_name || s.subject_short_name}</option>)}
+                </select>
+                {editingMapping && <input type="hidden" name="subject_code" value={editingMapping.subject_code} />}
+              
+              </label>
+
+              <label className="block"><span className="text-sm font-medium text-foreground">Study Year</span>
+                <select name="study_year" defaultValue={editingMapping?.study_year ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                  <option value="">Not Set</option>
+                  <option value="1">1 (First Year)</option>
+                  <option value="2">2 (Second Year)</option>
+                  <option value="3">3 (Third Year)</option>
+                  <option value="4">4 (Fourth Year)</option>
+                </select>
+              </label>
+
+              <label className="block"><span className="text-sm font-medium text-foreground">Semester</span>
+                <select name="semester" defaultValue={editingMapping?.semester ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                  <option value="">Not Set</option>
+                  {[1,2,3,4,5,6,7,8].map(n => <option key={n} value={String(n)}>{n}</option>)}
+                </select>
+              </label>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <Button type="button" variant="outline" onClick={() => { setShowMappingModal(false); setEditingMapping(null) }}>Cancel</Button>
+              <Button type="submit">Save</Button>
+            </div>
+          </form>
+        </div>
+      )}
+      {showMappingDetails && mappingDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+          <div className="w-full max-w-3xl rounded-lg border bg-card p-6 shadow-lg overflow-auto max-h-[80vh]">
+            <div className="mb-4 flex justify-between items-start">
+              <h2 className="text-lg font-semibold text-foreground">Course - Subject Mapping Details</h2>
+              <button onClick={() => { setShowMappingDetails(false); setMappingDetails(null) }} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+            </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <h3 className="text-sm font-semibold">Course</h3>
+                <div className="mt-2 rounded border p-2">
+                  <div><strong>Code:</strong> {mappingDetails.course.course_code}</div>
+                  <div><strong>Short:</strong> {mappingDetails.course.course_short_name ?? '-'}</div>
+                  <div><strong>Full:</strong> {mappingDetails.course.course_full_name ?? '-'}</div>
+                </div>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Subject</h3>
+                <div className="mt-2 rounded border p-2">
+                  <div><strong>Code:</strong> {mappingDetails.mapping?.subject_code ?? mappingDetails.mapping?.subject?.subject_code}</div>
+                  <div><strong>Short:</strong> {mappingDetails.mapping?.subject?.subject_short_name ?? '-'}</div>
+                  <div><strong>Full:</strong> {mappingDetails.mapping?.subject?.subject_full_name ?? '-'}</div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-4">
+              <h3 className="text-sm font-semibold">Academic Placement</h3>
+              <div className="mt-2 rounded border p-2">Study Year: {mappingDetails.mapping?.study_year ?? 'Not Set'} • Semester: {mappingDetails.mapping?.semester ?? 'Not Set'}</div>
+            </div>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <div>
+                <h3 className="text-sm font-semibold">Institutes Offering this Course</h3>
+                <div className="mt-2 space-y-2">{(mappingDetails.institutes ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No data available</div> : (mappingDetails.institutes ?? []).map((i: any) => <div key={i.inst_short_name} className="rounded border p-2">{i.inst_short_name} — {i.inst_full_name}</div>)}</div>
+              </div>
+              <div>
+                <h3 className="text-sm font-semibold">Faculty Associated</h3>
+                <div className="mt-2 space-y-2">{(mappingDetails.faculty ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No data available</div> : (mappingDetails.faculty ?? []).filter((f: any) => Array.isArray(f.subjects) && f.subjects.some((s: any) => s.subject_code === (mappingDetails.mapping?.subject_code ?? mappingDetails.mapping?.subject?.subject_code))).map((f: any) => <div key={f.PAN} className="rounded border p-2">{f.faculty_name} — {f.PAN} — {f.inst_short_name} — {f.faculty_desig ?? '-'}</div>)}</div>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

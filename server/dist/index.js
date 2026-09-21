@@ -362,23 +362,102 @@ catch {
     return res.status(400).json({ error: 'Cannot delete mapping' });
 } });
 // COURSE_SUBJECT MAPPING ENDPOINTS
-app.get('/api/course-subjects', auth, async (_req, res) => res.json(await prisma.courseSubject.findMany()));
-app.post('/api/course-subjects', auth, allow('CE'), async (req, res) => { const parsed = zod_1.z.object({ course_code: zod_1.z.string().max(3), subject_code: zod_1.z.string().max(10) }).parse(req.body); const existing = await prisma.courseSubject.findUnique({ where: { course_code_subject_code: { course_code: parsed.course_code, subject_code: parsed.subject_code } } }); if (existing)
-    return res.status(409).json({ error: 'Course-subject mapping already exists' }); const data = { course_code: parsed.course_code, subject_code: parsed.subject_code }; try {
-    return res.status(201).json(await prisma.courseSubject.create({ data }));
-}
-catch (err) {
-    if (err?.code === 'P2002')
+app.get('/api/course-subjects', auth, allow('CE', 'CA'), async (req, res) => {
+    if (req.session?.role === 'CA') {
+        // CA can only see mappings for courses offered by their institute
+        const instCourses = await prisma.instCourse.findMany({
+            where: { inst_short_name: req.session.institute },
+            select: { course_code: true }
+        });
+        const courseCodes = instCourses.map(ic => ic.course_code);
+        const rows = await prisma.courseSubject.findMany({
+            where: { course_code: { in: courseCodes } }
+        });
+        return res.json(rows);
+    }
+    // CE sees all mappings
+    return res.json(await prisma.courseSubject.findMany());
+});
+app.post('/api/course-subjects', auth, allow('CE', 'CA'), async (req, res) => {
+    const parsed = zod_1.z.object({
+        course_code: zod_1.z.string().max(3),
+        subject_code: zod_1.z.string().max(10),
+        study_year: zod_1.z.number().int().min(1).max(4).nullable().optional(),
+        semester: zod_1.z.number().int().min(1).max(8).nullable().optional(),
+    }).parse(req.body);
+    // For CA, validate that the course is offered by their institute
+    if (req.session?.role === 'CA') {
+        if (!req.session.institute)
+            return res.status(403).json({ error: 'Institute information missing' });
+        const instCourse = await prisma.instCourse.findUnique({
+            where: { inst_short_name_course_code: { inst_short_name: req.session.institute, course_code: parsed.course_code } }
+        });
+        if (!instCourse)
+            return res.status(403).json({ error: 'This course is not offered by your institute' });
+    }
+    const existing = await prisma.courseSubject.findUnique({ where: { course_code_subject_code: { course_code: parsed.course_code, subject_code: parsed.subject_code } } });
+    if (existing)
         return res.status(409).json({ error: 'Course-subject mapping already exists' });
-    throw err;
-} });
-app.delete('/api/course-subjects/:course_code/:subject_code', auth, allow('CE'), async (req, res) => { try {
-    await prisma.courseSubject.delete({ where: { course_code_subject_code: { course_code: String(req.params.course_code), subject_code: String(req.params.subject_code) } } });
-    return res.status(204).send();
-}
-catch {
-    return res.status(400).json({ error: 'Cannot delete mapping' });
-} });
+    const data = { course_code: parsed.course_code, subject_code: parsed.subject_code };
+    if (typeof parsed.study_year !== 'undefined')
+        data.study_year = parsed.study_year;
+    if (typeof parsed.semester !== 'undefined')
+        data.semester = parsed.semester;
+    try {
+        return res.status(201).json(await prisma.courseSubject.create({ data }));
+    }
+    catch (err) {
+        if (err?.code === 'P2002')
+            return res.status(409).json({ error: 'Course-subject mapping already exists' });
+        throw err;
+    }
+});
+// Update existing course-subject mapping (allow changing study_year and semester)
+app.put('/api/course-subjects/:course_code/:subject_code', auth, allow('CE', 'CA'), async (req, res) => {
+    const courseCode = String(req.params.course_code);
+    const subjectCode = String(req.params.subject_code);
+    const parsed = zod_1.z.object({ study_year: zod_1.z.number().int().min(1).max(4).nullable().optional(), semester: zod_1.z.number().int().min(1).max(8).nullable().optional() }).parse(req.body);
+    const existing = await prisma.courseSubject.findUnique({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } } });
+    if (!existing)
+        return res.status(404).json({ error: 'Course-subject mapping not found' });
+    // For CA, validate that the course is offered by their institute
+    if (req.session?.role === 'CA') {
+        if (!req.session.institute)
+            return res.status(403).json({ error: 'Institute information missing' });
+        const instCourse = await prisma.instCourse.findUnique({
+            where: { inst_short_name_course_code: { inst_short_name: req.session.institute, course_code: courseCode } }
+        });
+        if (!instCourse)
+            return res.status(403).json({ error: 'This course is not offered by your institute' });
+    }
+    const data = {};
+    if (Object.prototype.hasOwnProperty.call(parsed, 'study_year'))
+        data.study_year = parsed.study_year;
+    if (Object.prototype.hasOwnProperty.call(parsed, 'semester'))
+        data.semester = parsed.semester;
+    return res.json(await prisma.courseSubject.update({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } }, data }));
+});
+app.delete('/api/course-subjects/:course_code/:subject_code', auth, allow('CE', 'CA'), async (req, res) => {
+    const courseCode = String(req.params.course_code);
+    const subjectCode = String(req.params.subject_code);
+    // For CA, validate that the course is offered by their institute
+    if (req.session?.role === 'CA') {
+        if (!req.session.institute)
+            return res.status(403).json({ error: 'Institute information missing' });
+        const instCourse = await prisma.instCourse.findUnique({
+            where: { inst_short_name_course_code: { inst_short_name: req.session.institute, course_code: courseCode } }
+        });
+        if (!instCourse)
+            return res.status(403).json({ error: 'This course is not offered by your institute' });
+    }
+    try {
+        await prisma.courseSubject.delete({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } } });
+        return res.status(204).send();
+    }
+    catch {
+        return res.status(400).json({ error: 'Cannot delete mapping' });
+    }
+});
 app.get('/api/faculty-export', auth, allow('CE', 'CA'), async (req, res) => { const rows = await prisma.faculty.findMany({ where: facultyScope(req) }); const columns = ['PAN', 'Title', 'faculty_name', 'inst_short_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo']; const csv = [columns.join(','), ...rows.map((row) => columns.map((column) => JSON.stringify(row[column] ?? '')).join(','))].join('\n'); res.setHeader('Content-Type', 'text/csv'); res.setHeader('Content-Disposition', 'attachment; filename="faculty-export.csv"'); return res.send(csv); });
 app.get('/api/faculty-available-subjects', auth, async (req, res) => {
     if (req.session?.role !== 'FAC')
@@ -579,6 +658,7 @@ app.get('/api/courses/:course_code/details', auth, async (req, res) => {
     // If CA or FAC, restrict to their institute
     const instFilter = req.session?.role === 'CE' ? {} : { inst_short_name: req.session?.institute };
     const institutesOffering = await prisma.instCourse.findMany({ where: { course_code: courseCode, ...instFilter }, include: { institute: true } });
+    // return the full course-subject mapping rows including study_year/semester and nested subject
     const subjects = await prisma.courseSubject.findMany({ where: { course_code: courseCode }, include: { subject: true } });
     const subjectCodes = subjects.map(s => s.subject_code);
     // Count distinct faculty teaching any subject in this course
@@ -586,7 +666,8 @@ app.get('/api/courses/:course_code/details', auth, async (req, res) => {
     if (subjectCodes.length > 0) {
         facultyRows = await prisma.faculty.findMany({ where: { subjects: { some: { subject_code: { in: subjectCodes } } }, ...(req.session?.role === 'CE' ? {} : { inst_short_name: req.session?.institute }) } });
     }
-    return res.json({ course, institutesOffering: institutesOffering.map(r => r.institute), subjects: subjects.map(s => s.subject), facultyCount: facultyRows.length, faculty: facultyRows });
+    // subjects is an array of CourseSubject rows with nested `subject` object and mapping fields
+    return res.json({ course, institutesOffering: institutesOffering.map(r => r.institute), subjects, facultyCount: facultyRows.length, faculty: facultyRows });
 });
 // SUBJECT DETAILS - analytics
 app.get('/api/subjects/:subject_code/details', auth, async (req, res) => {
@@ -594,6 +675,7 @@ app.get('/api/subjects/:subject_code/details', auth, async (req, res) => {
     const subject = await prisma.subject.findUnique({ where: { subject_code: subjectCode } });
     if (!subject)
         return res.status(404).json({ error: 'Subject not found' });
+    // return full course-subject mapping rows including study_year/semester and nested course
     const courseMappings = await prisma.courseSubject.findMany({ where: { subject_code: subjectCode }, include: { course: true } });
     const courseCodes = courseMappings.map(c => c.course_code);
     // Institutes where those courses are available (respect role scope)
@@ -607,7 +689,8 @@ app.get('/api/subjects/:subject_code/details', auth, async (req, res) => {
     if (req.session?.role !== 'CE')
         facultyWhere.inst_short_name = req.session?.institute;
     const facultyRows = await prisma.faculty.findMany({ where: facultyWhere });
-    return res.json({ subject, courses: courseMappings.map(c => c.course), institutes, instituteCount: new Set(institutes.map(i => i.inst_short_name)).size, facultyCount: facultyRows.length, faculty: facultyRows });
+    // courses: return mapping rows so frontend can read study_year/semester and nested course
+    return res.json({ subject, courses: courseMappings, institutes, instituteCount: new Set(institutes.map(i => i.inst_short_name)).size, facultyCount: facultyRows.length, faculty: facultyRows });
 });
 // INSTITUTE DETAILS - analytics
 app.get('/api/institutes/:inst_short_name/details', auth, async (req, res) => {
@@ -621,12 +704,13 @@ app.get('/api/institutes/:inst_short_name/details', auth, async (req, res) => {
         return res.status(404).json({ error: 'Institute not found' });
     const instCourses = await prisma.instCourse.findMany({ where: { inst_short_name: inst }, include: { course: true } });
     const courseCodes = instCourses.map(ic => ic.course_code);
+    // include mapping rows so institute view can show study_year and semester per subject
     const subjects = await prisma.courseSubject.findMany({ where: { course_code: { in: courseCodes } }, include: { subject: true } });
     const facultyRows = await prisma.faculty.findMany({ where: { inst_short_name: inst } });
     const courseStats = await Promise.all(instCourses.map(async (ic) => {
         const subs = await prisma.courseSubject.findMany({ where: { course_code: ic.course_code }, include: { subject: true } });
         const facultyForCourse = await prisma.faculty.findMany({ where: { subjects: { some: { subject: { courses: { some: { course_code: ic.course_code } } } } }, inst_short_name: inst } });
-        return { course: ic.course, intake: ic.intake, strength: ic.strength, subjects: subs.map(s => s.subject), facultyCount: facultyForCourse.length, faculty: facultyForCourse };
+        return { course: ic.course, intake: ic.intake, strength: ic.strength, subjects: subs, facultyCount: facultyForCourse.length, faculty: facultyForCourse };
     }));
     return res.json({ institute, courses: instCourses.map(ic => ic.course), facultyCount: facultyRows.length, subjects: subjects.map(s => s.subject), courseStats });
 });
