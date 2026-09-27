@@ -74,7 +74,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
             <p className="text-xs text-muted-foreground mt-1">
               {role === 'CE' && 'Programme Coordinator: create and manage global data'}
               {role === 'CA' && 'College Admin: manage your institute and faculty'}
-              {role === 'FAC' && 'College User: manage your profile and institute faculty'}
+              {role === 'FAC' && 'College User: manage faculty and mappings for your institute'}
             </p>
           </div>
 
@@ -92,7 +92,7 @@ export default function Login({ onLoginSuccess }: LoginProps) {
                   ? 'Enter Programme Coordinator username'
                   : role === 'CA'
                     ? 'Enter institute short name'
-                    : 'Enter faculty PAN (your PAN)'
+                    : 'Enter College User username'
               }
               className="w-full rounded border border-input bg-background px-3 py-2 text-foreground placeholder:text-muted-foreground text-sm"
               disabled={loading}

@@ -97,7 +97,7 @@ function downloadCsv(filename: string, headers: string[], rows: Record<string, a
   URL.revokeObjectURL(url)
 }
 const roleLabels: Record<string, string> = { CE: 'Programme Coordinator', CA: 'College Admin', FAC: 'College User' }
-const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['My Profile', 'Courses', 'Subjects', 'Faculty', 'My Subjects', 'My Specializations', 'Users'] }
+const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['Dashboard', 'Faculty', 'Courses', 'Subjects'] }
 const IPU_ENGINEERING_COURSE_CODES = new Set(['BTE', 'MTE', 'CSE', 'ECE', 'EEE', 'ME', 'CE', 'IT', 'CHE', 'EIE'])
 const NON_ENGINEERING_COURSE_TOKENS = ['bba', 'mba', 'bca', 'ba', 'b.com', 'law', 'pharmacy', 'medical', 'mbbs', 'commerce', 'management']
 
@@ -125,8 +125,55 @@ function FacultyListTable({ fac, q, setQ, onSel, onExp, onAdd, onCreateCredentia
   return <div className="rounded-lg border bg-card"><div className="border-b p-4 flex gap-2"><input placeholder="Search..." value={q} onChange={e => setQ(e.target.value)} className="flex-1 rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /><Button variant="outline" size="sm" onClick={onExp}><Download className="size-4" />CSV</Button><Button size="sm" onClick={onAdd}><Plus className="size-4" />Add</Button>{canCreateCredential && <Button variant="outline" size="sm" onClick={onCreateCredential}>Create Credential</Button>}</div><div className="overflow-x-auto"><table className="w-full text-sm"><thead><tr className="border-b bg-muted"><th className="p-2 text-left text-foreground">Name</th><th className="p-2 text-left text-foreground">PAN</th><th className="p-2 text-left text-foreground">Institute</th><th className="p-2 text-right text-foreground">Action</th></tr></thead><tbody>{fac.map((f: Faculty) => <tr key={f.PAN} className="border-b"><td className="p-2 text-foreground">{f.faculty_name}</td><td className="p-2 font-mono text-xs text-foreground">{f.PAN}</td><td className="p-2 text-foreground">{f.inst_short_name}</td><td className="p-2 text-right"><Button size="sm" variant="outline" onClick={() => onSel(f)}>View</Button>{canDelete && <Button size="sm" variant="outline" className="ml-2 text-red-600" onClick={() => onDelete(f.PAN)}>Delete</Button>}</td></tr>)}</tbody></table></div></div>
 }
 
-function FacultyDialog({ fac, onClose, onEdit }: any) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><div className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{fac?.faculty_name || 'Faculty'}</h2><button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-2 text-sm mb-4 text-foreground"><div><strong>PAN:</strong> {fac?.PAN}</div><div><strong>Email:</strong> {fac?.faculty_Email}</div><div><strong>Designation:</strong> {fac?.faculty_desig}</div><div><strong>Institute:</strong> {fac?.inst_short_name}</div><div><strong>Experience:</strong> {fac?.faculty_total_exp ?? '-'} years</div><div><strong>Mobile:</strong> {fac?.faculty_MobileNo ?? '-'}</div></div><div className="flex gap-2 justify-end"><Button variant="outline" onClick={onClose}>Close</Button><Button onClick={onEdit}>Edit</Button></div></div></div>
+function FacultyDialog({ fac, onClose, onEdit, subjects, courseSubjectMappings, facultySubjects, facultySpecs, specializations }: any) {
+  const subjectRows = (facultySubjects ?? []).filter((item: FacultySubjectMap) => item.PAN === fac?.PAN)
+  const specRows = (facultySpecs ?? []).filter((item: FacultySpecMap) => item.PAN === fac?.PAN)
+
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><div className="w-full max-w-4xl rounded-lg border bg-card p-6 shadow-lg overflow-auto max-h-[80vh]"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{fac?.faculty_name || 'Faculty'}</h2><button onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div>
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="rounded border p-4">
+        <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Profile</h3>
+        <div className="space-y-2 text-sm text-foreground">
+          <div><strong>PAN:</strong> {fac?.PAN}</div>
+          <div><strong>Title:</strong> {fac?.Title || '-'}</div>
+          <div><strong>Faculty Name:</strong> {fac?.faculty_name || '-'}</div>
+          <div><strong>Institute:</strong> {fac?.inst_short_name || '-'}</div>
+          <div><strong>Designation:</strong> {fac?.faculty_desig || '-'}</div>
+          <div><strong>Total Experience:</strong> {fac?.faculty_total_exp ?? '-'} years</div>
+          <div><strong>Address:</strong> {fac?.faculty_address || '-'}</div>
+          <div><strong>Email:</strong> {fac?.faculty_Email || '-'}</div>
+          <div><strong>Mobile:</strong> {fac?.faculty_MobileNo || '-'}</div>
+          <div><strong>Entered By:</strong> {fac?.entered_by || '-'}</div>
+          <div><strong>Entered On:</strong> {fac?.entered_on ? new Date(fac.entered_on).toLocaleString() : '-'}</div>
+        </div>
+      </div>
+      <div className="space-y-4">
+        <div className="rounded border p-4">
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Subjects</h3>
+          <div className="space-y-2 text-sm">
+            {subjectRows.length === 0 ? <div className="text-muted-foreground">No subjects mapped.</div> : subjectRows.map((item: FacultySubjectMap) => {
+              const subject = (subjects ?? []).find((s: Subject) => s.subject_code === item.subject_code)
+              const courseMap = (courseSubjectMappings ?? []).find((mapping: CourseSubjectMap) => mapping.subject_code === item.subject_code)
+              return <div key={`${item.PAN}-${item.subject_code}`} className="rounded border p-2">
+                <div className="font-medium">{subject?.subject_code || item.subject_code}</div>
+                <div className="text-muted-foreground">{subject?.subject_full_name || subject?.subject_short_name || 'Subject record'}</div>
+                <div className="text-xs text-muted-foreground">Course: {courseMap?.course_code || '-'} • Study Year: {courseMap?.study_year ?? '-'} • Semester: {courseMap?.semester ?? '-'}</div>
+              </div>
+            })}
+          </div>
+        </div>
+        <div className="rounded border p-4">
+          <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Specializations</h3>
+          <div className="space-y-2 text-sm">
+            {specRows.length === 0 ? <div className="text-muted-foreground">No specializations mapped.</div> : specRows.map((item: FacultySpecMap) => {
+              const spec = (specializations ?? []).find((s: Specialization) => s.spec_id === item.spec_id)
+              return <div key={`${item.PAN}-${item.spec_id}`} className="rounded border p-2"><div className="font-medium">{spec?.spec_name || `Spec ${item.spec_id}`}</div><div className="text-xs text-muted-foreground">Spec ID: {item.spec_id}</div></div>
+            })}
+          </div>
+        </div>
+      </div>
+    </div>
+    <div className="mt-4 flex gap-2 justify-end"><Button variant="outline" onClick={onClose}>Close</Button><Button onClick={onEdit}>Edit</Button></div></div></div>
 }
 
 function CourseDetailsModal({ details, onClose }: any) {
@@ -463,7 +510,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     const base = session?.role === 'CA'
       ? faculty.filter(item => item.inst_short_name === session.institute)
       : session?.role === 'FAC'
-        ? faculty.filter(item => item.PAN === session.user_name)
+        ? faculty.filter(item => item.inst_short_name === session.institute)
         : faculty
 
     return base.filter(item => matchesSearch(item, facultySearch, ['PAN', 'faculty_name', 'faculty_desig', 'faculty_Email', 'faculty_MobileNo', 'inst_short_name']))
@@ -472,7 +519,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const filtered = visibleFaculty
 
   const visibleInstCourseMappings = useMemo(() => {
-    const base = session?.role === 'CA'
+    const base = session?.role === 'CA' || session?.role === 'FAC'
       ? instCourseMappings.filter(item => item.inst_short_name === session.institute)
       : instCourseMappings
 
@@ -480,7 +527,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   }, [instCourseMappings, instCourseSearch, session])
 
   const visibleCourseSubjectMappings = useMemo(() => {
-    const base = session?.role === 'CA'
+    const base = session?.role === 'CA' || session?.role === 'FAC'
       ? courseSubjectMappings.filter(item => {
           const course = courses.find(courseItem => courseItem.course_code === item.course_code)
           return course && instCourseMappings.some(mapping => mapping.inst_short_name === session.institute && mapping.course_code === item.course_code)
@@ -492,17 +539,17 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
 
   const visibleFacultySubjects = useMemo(() => {
     const base = session?.role === 'FAC'
-      ? facultySubjects.filter(item => item.PAN === session.user_name)
+      ? facultySubjects.filter(item => faculty.some(f => f.PAN === item.PAN && f.inst_short_name === session.institute))
       : facultySubjects
     return base.filter(item => matchesSearch(item, facultySubjectSearch, ['PAN', 'subject_code']))
-  }, [facultySubjects, facultySubjectSearch, session])
+  }, [facultySubjects, faculty, facultySubjectSearch, session])
 
   const visibleFacultySpecs = useMemo(() => {
     const base = session?.role === 'FAC'
-      ? facultySpecs.filter(item => item.PAN === session.user_name)
+      ? facultySpecs.filter(item => faculty.some(f => f.PAN === item.PAN && f.inst_short_name === session.institute))
       : facultySpecs
     return base.filter(item => matchesSearch(item, facultySpecializationSearch, ['PAN', 'spec_id']))
-  }, [facultySpecs, facultySpecializationSearch, session])
+  }, [facultySpecs, faculty, facultySpecializationSearch, session])
 
   const visibleUsers = useMemo(
     () => {
@@ -522,13 +569,11 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   // Faculty available for credential creation (exclude those with FAC credentials)
   const availableFacultyForCredential = useMemo(() => {
     const existingFacCredentials = new Set(users.filter(u => u.role === 'FAC').map(u => u.user_name.toUpperCase()))
-    const base = session?.role === 'CA'
+    const base = session?.role === 'CA' || session?.role === 'FAC'
       ? visibleFaculty.filter(f => !existingFacCredentials.has((f.PAN ?? '').toUpperCase()))
-      : session?.role === 'FAC'
-        ? visibleFaculty.filter(f => !existingFacCredentials.has((f.PAN ?? '').toUpperCase()))
-        : visibleFaculty.filter(f => !existingFacCredentials.has((f.PAN ?? '').toUpperCase()))
+      : visibleFaculty.filter(f => !existingFacCredentials.has((f.PAN ?? '').toUpperCase()))
     return base
-  }, [visibleFaculty, users])
+  }, [visibleFaculty, users, session])
 
   // Institutes available for credential creation (exclude those with CA credentials)
   const availableInstitutesForCredential = useMemo(() => {
@@ -546,10 +591,10 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const selectedFacultySpecializations = assignmentTargetPan ? facultySpecs.filter(item => item.PAN === assignmentTargetPan) : []
 
   useEffect(() => {
-    if (session?.role === 'FAC' && !assignmentTargetPan) {
-      setAssignmentTargetPan(session.user_name)
+    if (session?.role === 'FAC' && ownInstituteFaculty.length > 0 && !assignmentTargetPan) {
+      setAssignmentTargetPan(ownInstituteFaculty[0].PAN)
     }
-  }, [session, assignmentTargetPan])
+  }, [session, ownInstituteFaculty, assignmentTargetPan])
 
   async function saveFaculty(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
@@ -1155,11 +1200,15 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     const text = await file.text()
     const records = parseCsvRecords(text)
     if (records.length === 0) throw new Error('No CSV rows were found to import.')
+   
+   
+
+    
     await importer(records)
   }
 
   async function handleCsvImport(event: React.ChangeEvent<HTMLInputElement>, importer: (records: Record<string, string>[]) => Promise<void>) {
-    const file = event.target.files?.[0]
+       const file = event.target.files?.[0]
     if (!file) return
     try {
       await readCsvFileAndImport(file, importer)
@@ -1199,6 +1248,84 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const isCollegeAdmin = sessionRole === 'CA'
   const isCentralExaminer = sessionRole === 'CE'
   const profile = isFaculty ? faculty.find(row => row.PAN === session?.user_name) : null
+
+  const facultyDashboard = useMemo(() => {
+    const instituteFaculty = session?.role === 'FAC' ? faculty.filter(item => item.inst_short_name === session.institute) : faculty
+    const instituteSubjects = session?.role === 'FAC' ? subjects.filter(subject => {
+      const courseCodes = courseSubjectMappings.filter(mapping => mapping.subject_code === subject.subject_code).map(mapping => mapping.course_code)
+      return courseCodes.some(courseCode => instCourseMappings.some(mapping => mapping.inst_short_name === session.institute && mapping.course_code === courseCode))
+    }) : subjects
+    const facultySubjectCount = session?.role === 'FAC' ? facultySubjects.filter(item => instituteFaculty.some(f => f.PAN === item.PAN)) : facultySubjects
+    const facultySpecCount = session?.role === 'FAC' ? facultySpecs.filter(item => instituteFaculty.some(f => f.PAN === item.PAN)) : facultySpecs
+    return {
+      totalFaculty: instituteFaculty.length,
+      totalSubjects: instituteSubjects.length,
+      totalFacultySubjectMappings: facultySubjectCount.length,
+      totalFacultySpecializationMappings: facultySpecCount.length,
+    }
+  }, [session, faculty, subjects, facultySubjects, facultySpecs, courseSubjectMappings, instCourseMappings])
+
+  async function addFacultyRecordFromForm(form: HTMLFormElement) {
+    const payload = sanitizeFormPayload(form)
+    if (!payload.PAN || !payload.faculty_name) {
+      throw new Error('PAN and Faculty Name are required.')
+    }
+    if (session?.role === 'FAC' && payload.inst_short_name && String(payload.inst_short_name) !== session.institute) {
+      throw new Error('College User cannot change the institute.');
+    }
+    const body = {
+      ...payload,
+      inst_short_name: session?.role === 'FAC' ? session.institute : payload.inst_short_name,
+      faculty_total_exp: payload.faculty_total_exp !== undefined ? Number(payload.faculty_total_exp) : undefined,
+      faculty_Email: payload.faculty_Email ?? '',
+      faculty_MobileNo: payload.faculty_MobileNo ?? '',
+    }
+    const saved = await request('/api/faculty', { method: 'POST', body: JSON.stringify(body) })
+    setFaculty(rows => [...rows, saved])
+    setEditing(null)
+    setNotice('Faculty created successfully.')
+    await loadData()
+  }
+
+  async function updateFacultyRecordFromForm(form: HTMLFormElement, pan: string) {
+    const payload = sanitizeFormPayload(form)
+    if (session?.role === 'FAC' && payload.inst_short_name && String(payload.inst_short_name) !== session.institute) {
+      throw new Error('College User cannot change the institute.')
+    }
+    const saved = await request(`/api/faculty/${encodeURIComponent(pan)}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        ...payload,
+        inst_short_name: session?.role === 'FAC' ? session.institute : payload.inst_short_name,
+        faculty_total_exp: payload.faculty_total_exp !== undefined ? Number(payload.faculty_total_exp) : undefined,
+      }),
+    })
+    setFaculty(rows => rows.map(row => row.PAN === saved.PAN ? saved : row))
+    setEditing(null)
+    setNotice('Faculty updated successfully.')
+    await loadData()
+  }
+
+  async function importFacultyData() {
+    if (!window.confirm('This will overwrite existing faculty data. Continue?')) return
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const res = await request('/api/faculty/import-template')
+      const url = res.url
+      const link = document.createElement('a')
+      link.href = url
+      link.download = 'faculty-template.csv'
+      link.click()
+      URL.revokeObjectURL(url)
+      setNotice('Faculty data imported successfully.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to import faculty data')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -1290,126 +1417,166 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
 
           {isFaculty ? (
             <>
-              {active === 'My Profile' && (
+              {active === 'Dashboard' && (
+                <div className="space-y-4">
+                  <div className="rounded-lg border bg-card p-6">
+                    <h2 className="text-2xl font-bold text-foreground">College User</h2>
+                    <p className="mt-1 text-sm text-muted-foreground">Institute: {session.institute || 'Not assigned'}</p>
+                  </div>
+                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                    <Stat label="Total Faculty" value={facultyDashboard.totalFaculty} icon={Users} />
+                    <Stat label="Total Subjects" value={facultyDashboard.totalSubjects} icon={BookOpen} />
+                    <Stat label="Total Faculty-Subject Mappings" value={facultyDashboard.totalFacultySubjectMappings} icon={ClipboardList} />
+                    <Stat label="Total Faculty-Specialization Mappings" value={facultyDashboard.totalFacultySpecializationMappings} icon={ShieldCheck} />
+                  </div>
+                  <div className="rounded-lg border bg-card p-4">
+                    <h3 className="mb-4 text-lg font-semibold">Quick Actions</h3>
+                    <div className="flex flex-wrap gap-2">
+                      <Button onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}><Plus className="size-4" /> Add Faculty</Button>
+                      <Button variant="outline" onClick={() => setActive('Faculty')}>Manage Faculty</Button>
+                      <Button variant="outline" onClick={() => setActive('Courses')}>Faculty Subject Mapping</Button>
+                      <Button variant="outline" onClick={() => setActive('Subjects')}>Faculty Specialization Mapping</Button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {active === 'Faculty' && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
-                  {profile ? (
-                    <>
-                      <div className="mb-4 flex justify-between">
-                        <div>
-                          <div className="font-semibold text-foreground">{profile.Title} {profile.faculty_name}</div>
-                          <div className="text-sm text-muted-foreground">PAN: {profile.PAN}</div>
-                        </div>
-                        <Button onClick={() => setEditing(profile)} size="sm">Edit</Button>
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-2xl font-semibold">Faculty Management</h2>
+                      <p className="text-sm text-muted-foreground">Institute: {session.institute || 'Not assigned'}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => window.alert('CSV Upload coming soon')}>CSV Upload</Button>
+                      <Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'Title', 'faculty_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo', 'inst_short_name'], visibleFaculty)}>CSV Export</Button>
+                      <Button size="sm" onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}><Plus className="size-4" /> Add Faculty</Button>
+                    </div>
+                  </div>
+
+                  <div className="mb-4 flex gap-2">
+                    <input value={facultySearch} onChange={e => setFacultySearch(e.target.value)} placeholder="Search faculty by PAN, name, designation, email..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                  </div>
+
+                  {visibleFaculty.length === 0 ? (
+                    <div className="rounded border border-dashed p-8 text-center">
+                      <p className="text-lg font-medium">No faculty records found.</p>
+                      <div className="mt-4 flex justify-center">
+                        <Button size="sm" onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}>
+                          <Plus className="size-4" /> Add Faculty
+                        </Button>
                       </div>
-                      <div className="grid gap-3 text-sm md:grid-cols-2">
-                        <div><strong>Email:</strong> {profile.faculty_Email || '-'}</div>
-                        <div><strong>Institute:</strong> {profile.inst_short_name || '-'}</div>
-                        <div><strong>Designation:</strong> {profile.faculty_desig || '-'}</div>
-                        <div><strong>Experience:</strong> {profile.faculty_total_exp ?? '-'} years</div>
-                        <div className="md:col-span-2"><strong>Address:</strong> {profile.faculty_address || '-'}</div>
-                        <div><strong>Mobile:</strong> {profile.faculty_MobileNo || '-'}</div>
-                      </div>
-                    </>
+                    </div>
                   ) : (
-                    <p className="text-foreground">No profile</p>
+                    <div className="space-y-2">
+                      {visibleFaculty.map(item => (
+                        <div key={item.PAN} className="flex items-center justify-between rounded border p-3">
+                          <div>
+                            <div className="font-medium">{item.faculty_name || item.PAN}</div>
+                            <div className="text-sm text-muted-foreground">{item.PAN} • {item.faculty_desig || 'Designation'} • {item.inst_short_name}</div>
+                            <div className="text-xs text-muted-foreground">{item.faculty_Email || 'No email'} • {item.faculty_MobileNo || 'No mobile'}</div>
+                          </div>
+                          <div className="flex gap-2">
+                            <Button size="sm" variant="outline" onClick={() => setSelected(item)}>View</Button>
+                            <Button size="sm" variant="outline" onClick={() => setEditing(item)}>Edit</Button>
+                            <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteFaculty(item.PAN)}>Delete</Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
-                </div>
-              )}
-
-              {active === 'My Subjects' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={facultySubjectSearch} onChange={e => setFacultySubjectSearch(e.target.value)} placeholder="Search my subjects..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('my-subjects.csv', ['PAN', 'subject_code'], visibleFacultySubjects)}>CSV</Button>
-                    <input id="upload-faculty-subjects" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importFacultySubjectsCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-faculty-subjects')?.click()}>Upload</Button>
-                  </div>
-                  <div className="space-y-2">
-                    {visibleFacultySubjects.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleFacultySubjects.map(item => {
-                      const subject = subjects.find(s => s.subject_code === item.subject_code)
-                      return (
-                        <div key={`${item.PAN}-${item.subject_code}`} className="flex items-center justify-between rounded border p-3">
-                          <div>
-                            <div className="font-medium">{item.subject_code}</div>
-                            <div className="text-sm text-muted-foreground">{subject?.subject_full_name || subject?.subject_short_name || 'Subject record'}</div>
-                          </div>
-                          <Button type="button" size="sm" variant="outline" className="text-red-600" onClick={() => removeFacultySubject(item.subject_code)}>Remove</Button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  <div className="mt-4 rounded border border-dashed p-3">
-                    <div className="mb-2 text-sm font-medium text-foreground">Add a subject</div>
-                    <div className="flex gap-2">
-                      <select id="faculty-subject-select" className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                        <option value="">Select subject</option>
-                        {subjects.filter(subject => !mySubjects.some(item => item.subject_code === subject.subject_code)).map(subject => (
-                          <option key={subject.subject_code} value={subject.subject_code}>{subject.subject_code} — {subject.subject_full_name || subject.subject_short_name}</option>
-                        ))}
-                      </select>
-                      <Button type="button" onClick={addFacultySubject}>Add</Button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {active === 'My Specializations' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={facultySpecializationSearch} onChange={e => setFacultySpecializationSearch(e.target.value)} placeholder="Search my specializations..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('my-specializations.csv', ['PAN', 'spec_id'], visibleFacultySpecs)}>CSV</Button>
-                    <input id="upload-faculty-specializations" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importFacultySpecsCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-faculty-specializations')?.click()}>Upload</Button>
-                  </div>
-                  <div className="space-y-2">
-                    {visibleFacultySpecs.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleFacultySpecs.map(item => {
-                      const spec = specializations.find(s => s.spec_id === item.spec_id)
-                      return (
-                        <div key={`${item.PAN}-${item.spec_id}`} className="flex items-center justify-between rounded border p-3">
-                          <div>
-                            <div className="font-medium">{spec?.spec_name || `Spec ${item.spec_id}`}</div>
-                            <div className="text-sm text-muted-foreground">SPEC ID: {item.spec_id}</div>
-                          </div>
-                          <Button type="button" size="sm" variant="outline" className="text-red-600" onClick={() => removeFacultySpec(item.spec_id)}>Remove</Button>
-                        </div>
-                      )
-                    })}
-                  </div>
-                  <div className="mt-4 rounded border border-dashed p-3">
-                    <div className="mb-2 text-sm font-medium text-foreground">Add a specialization</div>
-                    <div className="flex gap-2">
-                      <select id="faculty-spec-select" className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                        <option value="">Select specialization</option>
-                        {specializations.filter(spec => !mySpecializations.some(item => item.spec_id === spec.spec_id)).map(spec => (
-                          <option key={spec.spec_id} value={String(spec.spec_id)}>{spec.spec_name || `Spec ${spec.spec_id}`}</option>
-                        ))}
-                      </select>
-                      <Button type="button" onClick={addFacultySpec}>Add</Button>
-                    </div>
-                  </div>
                 </div>
               )}
 
               {active === 'Courses' && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={courseSearch} onChange={e => setCourseSearch(e.target.value)} placeholder="Search courses..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('courses.csv', ['course_code', 'course_short_name', 'course_full_name'], visibleCourses)}>CSV</Button>
-                    <input id="upload-courses-faculty" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCoursesCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-courses-faculty')?.click()}>Upload</Button>
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-xl font-semibold">Faculty Subject Mapping</h2>
+                      <p className="text-sm text-muted-foreground">Select a faculty and assign subjects for {session.institute}</p>
+                    </div>
                   </div>
+                  <div className="mb-4">
+                    <label className="text-sm font-medium text-foreground">Faculty</label>
+                    <select value={assignmentTargetPan} onChange={e => setAssignmentTargetPan(e.target.value)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                      <option value="">Select faculty</option>
+                      {ownInstituteFaculty.map(facultyItem => <option key={facultyItem.PAN} value={facultyItem.PAN}>{facultyItem.faculty_name || facultyItem.PAN} ({facultyItem.PAN})</option>)}
+                    </select>
+                  </div>
+                  {!assignmentTargetPan ? (
+                    <p className="text-sm text-muted-foreground">Select a faculty to manage subjects.</p>
+                  ) : (
+                    <>
+                      <div className="mb-4 rounded border p-4">
+                        <div className="mb-2 font-medium">Currently Assigned Subjects</div>
+                        <div className="space-y-2">
+                          {selectedFacultyAssignments.length === 0 ? <p className="text-sm text-muted-foreground">No subjects assigned.</p> : selectedFacultyAssignments.map(item => {
+                            const subject = subjects.find(s => s.subject_code === item.subject_code)
+                            const courseMap = courseSubjectMappings.find(mapping => mapping.subject_code === item.subject_code)
+                            return <div key={`${item.PAN}-${item.subject_code}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{item.subject_code}</div><div className="text-sm text-muted-foreground">{subject?.subject_full_name || subject?.subject_short_name || 'Subject record'}</div><div className="text-xs text-muted-foreground">Course: {courseMap?.course_code || '-'} • Study Year: {courseMap?.study_year ?? '-'} • Semester: {courseMap?.semester ?? '-'}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => removeFacultySubject(item.subject_code)}>Remove</Button></div>
+                          })}
+                        </div>
+                      </div>
+                      <div className="rounded border border-dashed p-4">
+                        <div className="mb-2 font-medium">+ Add Subject</div>
+                        <div className="flex gap-2">
+                          <select id="faculty-subject-select" className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                            <option value="">Select subject</option>
+                            {subjects.filter(subject => !selectedFacultyAssignments.some(item => item.subject_code === subject.subject_code)).map(subject => (
+                              <option key={subject.subject_code} value={subject.subject_code}>{subject.subject_code} — {subject.subject_full_name || subject.subject_short_name}</option>
+                            ))}
+                          </select>
+                          <Button type="button" onClick={() => { const subjectCode = (document.getElementById('faculty-subject-select') as HTMLSelectElement | null)?.value; if (!subjectCode) return; request('/api/faculty-subjects', { method:'POST', body: JSON.stringify({ PAN: assignmentTargetPan, subject_code: subjectCode })}).then(()=>loadData()).catch(err => setError(err instanceof Error ? err.message : 'Unable to add subject')) }}>Add</Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
 
               {active === 'Subjects' && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={subjectSearch} onChange={e => setSubjectSearch(e.target.value)} placeholder="Search subjects..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('subjects.csv', ['subject_code', 'subject_short_name', 'subject_full_name', 'semester', 'spec_id'], visibleSubjects)}>CSV</Button>
-                    <input id="upload-subjects-faculty" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importSubjectsCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-subjects-faculty')?.click()}>Upload</Button>
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-xl font-semibold">Faculty Specialization Mapping</h2>
+                      <p className="text-sm text-muted-foreground">Select a faculty and assign specializations for {session.institute}</p>
+                    </div>
                   </div>
-                  <div className="space-y-2">{visibleSubjects.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleSubjects.map(item => <div key={item.subject_code} className="rounded border p-3"><div className="font-medium font-mono">{item.subject_code}</div><div className="text-sm text-muted-foreground">{item.subject_full_name || item.subject_short_name}</div></div>)}</div>
+                  <div className="mb-4">
+                    <label className="text-sm font-medium text-foreground">Faculty</label>
+                    <select value={assignmentTargetPan} onChange={e => setAssignmentTargetPan(e.target.value)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                      <option value="">Select faculty</option>
+                      {ownInstituteFaculty.map(facultyItem => <option key={facultyItem.PAN} value={facultyItem.PAN}>{facultyItem.faculty_name || facultyItem.PAN} ({facultyItem.PAN})</option>)}
+                    </select>
+                  </div>
+                  {!assignmentTargetPan ? (
+                    <p className="text-sm text-muted-foreground">Select a faculty to manage specializations.</p>
+                  ) : (
+                    <>
+                      <div className="mb-4 rounded border p-4">
+                        <div className="mb-2 font-medium">Current Specializations</div>
+                        <div className="space-y-2">
+                          {selectedFacultySpecializations.length === 0 ? <p className="text-sm text-muted-foreground">No specializations assigned.</p> : selectedFacultySpecializations.map(item => {
+                            const spec = specializations.find(s => s.spec_id === item.spec_id)
+                            return <div key={`${item.PAN}-${item.spec_id}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{spec?.spec_name || `Spec ${item.spec_id}`}</div><div className="text-sm text-muted-foreground">Spec ID: {item.spec_id}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => removeFacultySpec(item.spec_id)}>Remove</Button></div>
+                          })}
+                        </div>
+                      </div>
+                      <div className="rounded border border-dashed p-4">
+                        <div className="mb-2 font-medium">+ Add Specialization</div>
+                        <div className="flex gap-2">
+                          <select id="faculty-spec-select" className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                            <option value="">Select specialization</option>
+                            {specializations.filter(spec => !selectedFacultySpecializations.some(item => item.spec_id === spec.spec_id)).map(spec => (
+                              <option key={spec.spec_id} value={String(spec.spec_id)}>{spec.spec_name || `Spec ${spec.spec_id}`}</option>
+                            ))}
+                          </select>
+                          <Button type="button" onClick={() => { const specId = (document.getElementById('faculty-spec-select') as HTMLSelectElement | null)?.value; if (!specId) return; request('/api/faculty-specializations', { method:'POST', body: JSON.stringify({ PAN: assignmentTargetPan, spec_id: Number(specId) })}).then(()=>loadData()).catch(err => setError(err instanceof Error ? err.message : 'Unable to add specialization')) }}>Add</Button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </div>
               )}
             </>
@@ -1426,7 +1593,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
 
               {active === 'My College' && isCollegeAdmin && (
                 <div className="space-y-4">
-                  {/* Institute Profile Section */}
                   <div className="rounded-lg border bg-gradient-to-br from-blue-50 to-white p-6">
                     <div className="flex items-start justify-between mb-4">
                       <div>
@@ -1456,7 +1622,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     </div>
                   </div>
 
-                  {/* Courses Mapping */}
                   <div className="rounded-lg border bg-card p-4">
                     <h3 className="text-lg font-semibold mb-4">Course Allocation</h3>
                     <div className="space-y-2">
@@ -1718,7 +1883,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                   </div>
 
                   <div className="mt-4 space-y-2">
-                    {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleUsers.map(user => <div key={`${user.role}-${user.user_name}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{user.user_name}</div><div className="text-sm text-muted-foreground">{user.role}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(user.user_name, user.role)}>Revoke</Button></div>)}
+                    {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleUsers.map(user => <div key={`${user.role}-${user.user_name}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{user.user_name}</div><div className="text-sm text-muted-foreground">{user.role}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(user.user_name, user.role)}>Revoke</Button></div>) }
                   </div>
                 </div>
               )}
@@ -1727,7 +1892,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         </div>
       </main>
 
-      {selected && <FacultyDialog fac={selected} onClose={() => setSelected(null)} onEdit={() => { setEditing(selected); setSelected(null) }} />}
+      {selected && <FacultyDialog fac={selected} onClose={() => setSelected(null)} onEdit={() => { setEditing(selected); setSelected(null) }} subjects={subjects} courseSubjectMappings={courseSubjectMappings} facultySubjects={facultySubjects} facultySpecs={facultySpecs} specializations={specializations} />}
       {editing && <FacultyForm fac={editing} onClose={() => setEditing(null)} onSubmit={saveFaculty} role={session.role} />}
       {editingCourse && <CourseForm course={editingCourse} onClose={() => setEditingCourse(null)} onSubmit={saveCourse} />}
       {editingSpec && <SpecializationForm item={editingSpec} onClose={() => setEditingSpec(null)} onSubmit={saveSpecialization} />}
