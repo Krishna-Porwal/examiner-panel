@@ -39,6 +39,23 @@ function enforceFacultyInstituteScope(req: AuthedRequest, pan: string) {
 function safe(row: Record<string, unknown>) { const copy = { ...row }; delete copy.password; return copy }
 function normalizeUserName(value: string) { return value.trim().toUpperCase().replace(/\s+/g, '') }
 
+async function resolveInstituteForUser(userName: string, role: Role) {
+  const normalized = normalizeUserName(userName)
+
+  if (role === 'CE') return undefined
+
+  if (role === 'CA') {
+    const institute = await findInstituteByCode(normalized)
+    return institute?.inst_short_name ?? undefined
+  }
+
+  const faculty = await findFacultyByPan(normalized)
+  if (!faculty?.inst_short_name) return undefined
+
+  const institute = await findInstituteByCode(faculty.inst_short_name)
+  return institute?.inst_short_name ?? undefined
+}
+
 function normalizeCredentialPayload(payload: { user_name: string; password: string; role: 'CA' | 'FAC' }) {
   const userName = normalizeUserName(payload.user_name)
   const password = payload.password.trim()
@@ -97,12 +114,9 @@ app.post('/api/auth/login', async (req, res) => {
   if (!user || !(await bcrypt.compare(parsed.data.password.trim(), user.password))) return res.status(401).json({ error: 'Invalid username, role, or password.' }); 
   
   let institute: string | undefined
-  if (user.role === 'CA') {
-    institute = user.user_name
-  } else if (user.role === 'FAC') {
-    const maybeInstitute = normalizeUserName(user.user_name).replace(/_USER$/, '')
-    const instituteRecord = await prisma.institute.findUnique({ where: { inst_short_name: maybeInstitute } })
-    institute = instituteRecord?.inst_short_name ?? (maybeInstitute || undefined)
+  if (user.role === 'CA' || user.role === 'FAC') {
+    institute = await resolveInstituteForUser(user.user_name, user.role as Role)
+    if (!institute) return res.status(401).json({ error: 'This account is not mapped to a valid institute.' })
   }
   
   const session: Session = { user_name: user.user_name, role: user.role as Role, institute }; 
@@ -110,6 +124,80 @@ app.post('/api/auth/login', async (req, res) => {
 })
 app.get('/api/auth/me', auth, (req: AuthedRequest, res) => res.json({ user: req.session }))
 app.post('/api/auth/logout', auth, (_req, res) => res.status(204).send())
+
+app.get('/api/users', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const rows = await prisma.user.findMany({ orderBy: [{ role: 'asc' }, { user_name: 'asc' }] })
+  if (req.session?.role === 'CE') return res.json(rows.map(row => ({ ...row, password: undefined })))
+
+  const institute = req.session?.institute
+  if (!institute) return res.json([])
+
+  const allowedFaculty = await prisma.faculty.findMany({ where: { inst_short_name: institute }, select: { PAN: true } })
+  const allowedPans = new Set(allowedFaculty.map(row => normalizeUserName(row.PAN)))
+
+  const scoped = rows.filter(row => {
+    if (row.role === 'CA') return row.user_name === institute
+    if (row.role === 'FAC') return allowedPans.has(normalizeUserName(row.user_name))
+    return false
+  })
+
+  return res.json(scoped.map(row => ({ ...row, password: undefined })))
+})
+
+app.post('/api/users', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ user_name: z.string().trim().min(1).max(10), role: z.enum(['CA', 'FAC']), password: z.string().min(8) }).safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Enter the username, role, and password.' })
+
+  const user_name = normalizeUserName(parsed.data.user_name)
+  const role = parsed.data.role
+  const password = parsed.data.password.trim()
+
+  if (req.session?.role === 'CA' && role === 'CA') return res.status(403).json({ error: 'College Admin cannot create another College Admin credential.' })
+
+  if (role === 'CA') {
+    const institute = await findInstituteByCode(user_name)
+    if (!institute) return res.status(400).json({ error: 'Institute not found for this College Admin credential.' })
+    if (req.session?.role === 'CA' && institute.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'College Admin can only manage their own institute.' })
+  }
+
+  if (role === 'FAC') {
+    const facultyRecord = await findFacultyByPan(user_name)
+    if (!facultyRecord) return res.status(404).json({ error: 'Faculty record not found for this PAN.' })
+    if (!facultyRecord.inst_short_name) return res.status(400).json({ error: 'Faculty is not assigned to a valid institute.' })
+    const institute = await findInstituteByCode(facultyRecord.inst_short_name)
+    if (!institute) return res.status(400).json({ error: 'Faculty institute does not exist in the system.' })
+    if (req.session?.role === 'CA' && institute.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'College Admin can only create faculty credentials for their institute.' })
+  }
+
+  const existing = await findUserByCredential(user_name, role)
+  if (existing) return res.status(409).json({ error: 'A credential with this username and role already exists.' })
+
+  const passwordHash = await bcrypt.hash(password, 12)
+  const created = await prisma.user.create({ data: { user_name: user_name, role, password: passwordHash } })
+
+  return res.status(201).json({ user_name: created.user_name, role: created.role })
+})
+
+app.delete('/api/users/:user_name/:role', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const user_name = normalizeUserName(String(req.params.user_name))
+  const role = String(req.params.role).toUpperCase()
+  const validRole = role === 'CA' || role === 'FAC' ? role : null
+  if (!validRole) return res.status(400).json({ error: 'Invalid user role.' })
+
+  const existing = await findUserByCredential(user_name, validRole)
+  if (!existing) return res.status(404).json({ error: 'Credential not found.' })
+
+  if (validRole === 'CA' && req.session?.role === 'CA') return res.status(403).json({ error: 'College Admin cannot revoke another College Admin credential.' })
+  if (validRole === 'FAC' && req.session?.role === 'CA') {
+    const facultyRecord = await findFacultyByPan(user_name)
+    if (!facultyRecord || facultyRecord.inst_short_name !== req.session.institute) {
+      return res.status(403).json({ error: 'College Admin can only revoke faculty credentials from their institute.' })
+    }
+  }
+
+  await prisma.user.delete({ where: { user_name_role: { user_name: user_name, role: validRole } } })
+  return res.status(204).send()
+})
 
 app.get('/api/faculty', auth, async (req: AuthedRequest, res) => { const rows = await prisma.faculty.findMany({ where: facultyScope(req), orderBy: { faculty_name: 'asc' } }); return res.json(rows) })
 app.get('/api/faculty/:PAN', auth, async (req: AuthedRequest, res) => {
@@ -127,6 +215,9 @@ app.post('/api/faculty', auth, allow('CE', 'CA', 'FAC'), async (req: AuthedReque
   if (req.session?.role === 'CA' && (!parsed.inst_short_name || parsed.inst_short_name !== req.session.institute)) return res.status(403).json({ error: 'Faculty must belong to your institute' })
   const existing = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } }); if (existing) return res.status(409).json({ error: 'A faculty record with this PAN already exists' });
   const targetInstitute = req.session?.role === 'CA' || req.session?.role === 'FAC' ? req.session.institute : parsed.inst_short_name
+  if (!targetInstitute) return res.status(400).json({ error: 'Institute is required for this faculty record.' })
+  const instituteExists = await findInstituteByCode(targetInstitute)
+  if (!instituteExists) return res.status(400).json({ error: 'Faculty institute must match a real institute code.' })
   const data = { ...parsed, inst_short_name: targetInstitute, entered_by: req.session?.user_name, entered_on: new Date() }
   return res.status(201).json(await prisma.faculty.create({ data }))
 })
@@ -296,6 +387,359 @@ app.delete('/api/institutes/:inst_short_name', auth, allow('CE'), async (req: Au
   } catch {
     return res.status(400).json({ error: 'Cannot delete institute at this time' });
   }
+})
+
+function ensureInstituteAccess(req: AuthedRequest, institute?: string | null) {
+  if (req.session?.role === 'CE') return true
+  if (!req.session?.institute || !institute) return false
+  return req.session.institute === institute
+}
+
+app.get('/api/institutes', auth, async (req: AuthedRequest, res) => {
+  const rows = await prisma.institute.findMany({ orderBy: { inst_short_name: 'asc' } })
+  if (req.session?.role === 'CA' || req.session?.role === 'FAC') {
+    const institute = req.session.institute
+    return res.json(rows.filter(row => row.inst_short_name === institute))
+  }
+  return res.json(rows)
+})
+
+app.post('/api/institutes', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const parsed = z.object({
+    inst_short_name: z.string().trim().min(1).max(10),
+    inst_full_name: z.string().trim().max(100).optional(),
+    inst_Address1: z.string().trim().max(100).optional(),
+    inst_Address2: z.string().trim().max(100).optional(),
+    inst_District: z.string().trim().max(50).optional(),
+    inst_State: z.string().trim().max(50).optional(),
+    Landline_PhoneNo: z.string().trim().max(20).optional(),
+    Director_Name: z.string().trim().max(50).optional(),
+    Director_Desig: z.string().trim().max(25).optional(),
+    Director_Email: z.string().trim().email().max(50).optional(),
+    Director_MobileNo: z.string().trim().max(10).optional(),
+    ExamHead_Name: z.string().trim().max(50).optional(),
+    ExamHead_Desig: z.string().trim().max(25).optional(),
+    ExamHead_Email: z.string().trim().email().max(50).optional(),
+    ExamHead_MobileNo: z.string().trim().max(10).optional(),
+  }).parse(req.body)
+
+  if (req.session?.role === 'CA') {
+    if (!req.session.institute) return res.status(403).json({ error: 'College Admin is not mapped to an institute' })
+    if (parsed.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'College Admin can only manage their own institute' })
+  }
+
+  const normalized = normalizeUserName(parsed.inst_short_name)
+  const existing = await prisma.institute.findUnique({ where: { inst_short_name: normalized } })
+  if (existing) return res.status(409).json({ error: 'Institute already exists' })
+
+  const created = await prisma.institute.create({ data: { ...parsed, inst_short_name: normalized } })
+  return res.status(201).json(created)
+})
+
+app.put('/api/institutes/:inst_short_name', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const instShortName = normalizeUserName(String(req.params.inst_short_name))
+  const existing = await prisma.institute.findUnique({ where: { inst_short_name: instShortName } })
+  if (!existing) return res.status(404).json({ error: 'Institute not found' })
+  if (req.session?.role === 'CA' && !ensureInstituteAccess(req, instShortName)) return res.status(403).json({ error: 'College Admin can only update their institute' })
+
+  const parsed = z.object({
+    inst_short_name: z.string().trim().max(10).optional(),
+    inst_full_name: z.string().trim().max(100).optional(),
+    inst_Address1: z.string().trim().max(100).optional(),
+    inst_Address2: z.string().trim().max(100).optional(),
+    inst_District: z.string().trim().max(50).optional(),
+    inst_State: z.string().trim().max(50).optional(),
+    Landline_PhoneNo: z.string().trim().max(20).optional(),
+    Director_Name: z.string().trim().max(50).optional(),
+    Director_Desig: z.string().trim().max(25).optional(),
+    Director_Email: z.string().trim().email().max(50).optional(),
+    Director_MobileNo: z.string().trim().max(10).optional(),
+    ExamHead_Name: z.string().trim().max(50).optional(),
+    ExamHead_Desig: z.string().trim().max(25).optional(),
+    ExamHead_Email: z.string().trim().email().max(50).optional(),
+    ExamHead_MobileNo: z.string().trim().max(10).optional(),
+  }).parse(req.body)
+
+  const updateData = { ...parsed }
+  if (parsed.inst_short_name) updateData.inst_short_name = normalizeUserName(parsed.inst_short_name)
+  const updated = await prisma.institute.update({
+    where: { inst_short_name: instShortName },
+    data: updateData,
+  })
+  return res.json(updated)
+})
+
+app.get('/api/institutes/:inst_short_name', auth, async (req: AuthedRequest, res) => {
+  const instShortName = normalizeUserName(String(req.params.inst_short_name))
+  const row = await prisma.institute.findUnique({ where: { inst_short_name: instShortName } })
+  if (!row) return res.status(404).json({ error: 'Institute not found' })
+  if (req.session?.role === 'CA' || req.session?.role === 'FAC') {
+    if (!ensureInstituteAccess(req, row.inst_short_name)) return res.status(404).json({ error: 'Institute not found' })
+  }
+  return res.json(row)
+})
+
+app.get('/api/courses', auth, async (req: AuthedRequest, res) => {
+  let rows = await prisma.course.findMany({ orderBy: { course_code: 'asc' } })
+  if (req.session?.role === 'CA' || req.session?.role === 'FAC') {
+    const inst = req.session.institute
+    if (!inst) return res.json([])
+    const mappings = await prisma.instCourse.findMany({ where: { inst_short_name: inst }, select: { course_code: true } })
+    const allowedCodes = new Set(mappings.map(item => item.course_code))
+    rows = rows.filter(row => allowedCodes.has(row.course_code))
+  }
+  return res.json(rows)
+})
+
+app.post('/api/courses', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const parsed = z.object({
+    course_code: z.string().trim().min(1).max(3),
+    course_short_name: z.string().trim().max(10).optional(),
+    course_full_name: z.string().trim().max(100).optional(),
+  }).parse(req.body)
+  const courseCode = parsed.course_code.trim().toUpperCase()
+  const courseShortName = parsed.course_short_name?.trim()
+  const courseFullName = parsed.course_full_name?.trim()
+  if (!courseCode) return res.status(400).json({ error: 'Course code is required' })
+  const existing = await prisma.course.findUnique({ where: { course_code: courseCode } })
+  if (existing) return res.status(409).json({ error: 'Course already exists' })
+  enforceIpuEngineeringCourse(courseCode, courseFullName, courseShortName)
+  const created = await prisma.course.create({ data: { course_code: courseCode, course_short_name: courseShortName, course_full_name: courseFullName } })
+  return res.status(201).json(created)
+})
+
+app.put('/api/courses/:course_code', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const courseCode = String(req.params.course_code).trim().toUpperCase()
+  const existing = await prisma.course.findUnique({ where: { course_code: courseCode } })
+  if (!existing) return res.status(404).json({ error: 'Course not found' })
+  const parsed = z.object({
+    course_code: z.string().trim().max(3).optional(),
+    course_short_name: z.string().trim().max(10).optional(),
+    course_full_name: z.string().trim().max(100).optional(),
+  }).parse(req.body)
+  const nextCode = (parsed.course_code ?? courseCode).trim().toUpperCase()
+  const data = { ...parsed, course_code: nextCode, course_short_name: parsed.course_short_name?.trim(), course_full_name: parsed.course_full_name?.trim() }
+  const updated = await prisma.course.update({ where: { course_code: courseCode }, data })
+  return res.json(updated)
+})
+
+app.delete('/api/courses/:course_code', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const courseCode = String(req.params.course_code).trim().toUpperCase()
+  const existing = await prisma.course.findUnique({ where: { course_code: courseCode } })
+  if (!existing) return res.status(404).json({ error: 'Course not found' })
+  await prisma.$transaction(async (tx) => {
+    await tx.courseSubject.deleteMany({ where: { course_code: courseCode } })
+    await tx.instCourse.deleteMany({ where: { course_code: courseCode } })
+    await tx.course.delete({ where: { course_code: courseCode } })
+  })
+  return res.status(204).send()
+})
+
+app.get('/api/subjects', auth, async (req: AuthedRequest, res) => {
+  let rows = await prisma.subject.findMany({ orderBy: { subject_code: 'asc' } })
+  if (req.session?.role === 'CA' || req.session?.role === 'FAC') {
+    const inst = req.session.institute
+    if (!inst) return res.json([])
+    const courseCodes = (await prisma.instCourse.findMany({ where: { inst_short_name: inst }, select: { course_code: true } })).map(item => item.course_code)
+    const subjectCodes = (await prisma.courseSubject.findMany({ where: { course_code: { in: courseCodes } }, select: { subject_code: true } })).map(item => item.subject_code)
+    const codeSet = new Set(subjectCodes)
+    rows = rows.filter(row => codeSet.has(row.subject_code))
+  }
+  return res.json(rows)
+})
+
+app.post('/api/subjects', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const parsed = z.object({
+    subject_code: z.string().trim().min(1).max(10),
+    sub_subject_codes: z.string().trim().max(100).optional(),
+    subject_short_name: z.string().trim().max(10).optional(),
+    subject_full_name: z.string().trim().max(100).optional(),
+    semester: z.coerce.number().int().min(1).max(12).optional(),
+    spec_id: z.coerce.number().int().min(1).max(255).optional(),
+  }).parse(req.body)
+  const subjectCode = parsed.subject_code.trim().toUpperCase()
+  const existing = await prisma.subject.findUnique({ where: { subject_code: subjectCode } })
+  if (existing) return res.status(409).json({ error: 'Subject already exists' })
+  const created = await prisma.subject.create({
+    data: {
+      subject_code: subjectCode,
+      sub_subject_codes: parsed.sub_subject_codes?.trim(),
+      subject_short_name: parsed.subject_short_name?.trim(),
+      subject_full_name: parsed.subject_full_name?.trim(),
+      semester: parsed.semester,
+      spec_id: parsed.spec_id,
+    },
+  })
+  return res.status(201).json(created)
+})
+
+app.put('/api/subjects/:subject_code', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const subjectCode = String(req.params.subject_code).trim().toUpperCase()
+  const existing = await prisma.subject.findUnique({ where: { subject_code: subjectCode } })
+  if (!existing) return res.status(404).json({ error: 'Subject not found' })
+  const parsed = z.object({
+    subject_code: z.string().trim().max(10).optional(),
+    sub_subject_codes: z.string().trim().max(100).optional(),
+    subject_short_name: z.string().trim().max(10).optional(),
+    subject_full_name: z.string().trim().max(100).optional(),
+    semester: z.coerce.number().int().min(1).max(12).optional(),
+    spec_id: z.coerce.number().int().min(1).max(255).optional(),
+  }).parse(req.body)
+  const nextCode = (parsed.subject_code ?? subjectCode).trim().toUpperCase()
+  const updated = await prisma.subject.update({ where: { subject_code: subjectCode }, data: { ...parsed, subject_code: nextCode, sub_subject_codes: parsed.sub_subject_codes?.trim(), subject_short_name: parsed.subject_short_name?.trim(), subject_full_name: parsed.subject_full_name?.trim() } })
+  return res.json(updated)
+})
+
+app.delete('/api/subjects/:subject_code', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const subjectCode = String(req.params.subject_code).trim().toUpperCase()
+  const existing = await prisma.subject.findUnique({ where: { subject_code: subjectCode } })
+  if (!existing) return res.status(404).json({ error: 'Subject not found' })
+  await prisma.$transaction(async (tx) => {
+    await tx.facultySubject.deleteMany({ where: { subject_code: subjectCode } })
+    await tx.courseSubject.deleteMany({ where: { subject_code: subjectCode } })
+    await tx.subject.delete({ where: { subject_code: subjectCode } })
+  })
+  return res.status(204).send()
+})
+
+app.get('/api/specializations', auth, async (req: AuthedRequest, res) => {
+  const rows = await prisma.specialization.findMany({ orderBy: { spec_id: 'asc' } })
+  return res.json(rows)
+})
+
+app.post('/api/specializations', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ spec_id: z.coerce.number().int().min(1).max(255), spec_name: z.string().trim().max(30).optional() }).parse(req.body)
+  const existing = await prisma.specialization.findUnique({ where: { spec_id: parsed.spec_id } })
+  if (existing) return res.status(409).json({ error: 'Specialization already exists' })
+  const created = await prisma.specialization.create({ data: { spec_id: parsed.spec_id, spec_name: parsed.spec_name?.trim() } })
+  return res.status(201).json(created)
+})
+
+app.put('/api/specializations/:spec_id', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const specId = Number(req.params.spec_id)
+  const existing = await prisma.specialization.findUnique({ where: { spec_id: specId } })
+  if (!existing) return res.status(404).json({ error: 'Specialization not found' })
+  const parsed = z.object({ spec_id: z.coerce.number().int().min(1).max(255).optional(), spec_name: z.string().trim().max(30).optional() }).parse(req.body)
+  const updated = await prisma.specialization.update({ where: { spec_id: specId }, data: { ...parsed, spec_id: parsed.spec_id ?? specId, spec_name: parsed.spec_name?.trim() } })
+  return res.json(updated)
+})
+
+app.delete('/api/specializations/:spec_id', auth, allow('CE'), async (req: AuthedRequest, res) => {
+  const specId = Number(req.params.spec_id)
+  const existing = await prisma.specialization.findUnique({ where: { spec_id: specId } })
+  if (!existing) return res.status(404).json({ error: 'Specialization not found' })
+  await prisma.$transaction(async (tx) => {
+    await tx.facultySpec.deleteMany({ where: { spec_id: specId } })
+    await tx.subject.updateMany({ where: { spec_id: specId }, data: { spec_id: null } })
+    await tx.specialization.delete({ where: { spec_id: specId } })
+  })
+  return res.status(204).send()
+})
+
+app.get('/api/inst-courses', auth, async (req: AuthedRequest, res) => {
+  let rows = await prisma.instCourse.findMany({ orderBy: [{ inst_short_name: 'asc' }, { course_code: 'asc' }] })
+  if (req.session?.role === 'CA' || req.session?.role === 'FAC') {
+    const inst = req.session.institute
+    if (!inst) return res.json([])
+    rows = rows.filter(row => row.inst_short_name === inst)
+  }
+  return res.json(rows)
+})
+
+app.post('/api/inst-courses', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ inst_short_name: z.string().trim().min(1).max(10), course_code: z.string().trim().min(1).max(3), intake: z.coerce.number().int().min(0).optional(), strength: z.coerce.number().int().min(0).optional() }).parse(req.body)
+  if (req.session?.role === 'CA') {
+    if (!req.session.institute) return res.status(403).json({ error: 'College Admin is not mapped to an institute' })
+    if (parsed.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'College Admin can only manage their institute' })
+  }
+  const institute = await findInstituteByCode(parsed.inst_short_name)
+  if (!institute) return res.status(400).json({ error: 'Institute does not exist' })
+  const course = await prisma.course.findUnique({ where: { course_code: parsed.course_code.trim().toUpperCase() } })
+  if (!course) return res.status(404).json({ error: 'Course not found' })
+  const existing = await prisma.instCourse.findUnique({ where: { inst_short_name_course_code: { inst_short_name: institute.inst_short_name, course_code: course.course_code } } })
+  if (existing) return res.status(409).json({ error: 'Institute-course mapping already exists' })
+  const created = await prisma.instCourse.create({ data: { inst_short_name: institute.inst_short_name, course_code: course.course_code, intake: parsed.intake, strength: parsed.strength } })
+  return res.status(201).json(created)
+})
+
+app.delete('/api/inst-courses/:inst_short_name/:course_code', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const instShortName = normalizeUserName(String(req.params.inst_short_name))
+  const courseCode = String(req.params.course_code).trim().toUpperCase()
+  if (req.session?.role === 'CA' && !ensureInstituteAccess(req, instShortName)) return res.status(403).json({ error: 'College Admin can only delete mappings for their institute' })
+  const existing = await prisma.instCourse.findUnique({ where: { inst_short_name_course_code: { inst_short_name: instShortName, course_code: courseCode } } })
+  if (!existing) return res.status(404).json({ error: 'Institute-course mapping not found' })
+  await prisma.instCourse.delete({ where: { inst_short_name_course_code: { inst_short_name: instShortName, course_code: courseCode } } })
+  return res.status(204).send()
+})
+
+app.get('/api/course-subjects', auth, async (req: AuthedRequest, res) => {
+  let rows = await prisma.courseSubject.findMany({ orderBy: [{ course_code: 'asc' }, { subject_code: 'asc' }] })
+  if (req.session?.role === 'CA' || req.session?.role === 'FAC') {
+    const inst = req.session.institute
+    if (!inst) return res.json([])
+    const allowedCourseCodes = (await prisma.instCourse.findMany({ where: { inst_short_name: inst }, select: { course_code: true } })).map(item => item.course_code)
+    rows = rows.filter(row => allowedCourseCodes.includes(row.course_code))
+  }
+  return res.json(rows)
+})
+
+app.post('/api/course-subjects', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const parsed = z.object({ course_code: z.string().trim().min(1).max(3), subject_code: z.string().trim().min(1).max(10), study_year: z.coerce.number().int().min(1).max(8).optional(), semester: z.coerce.number().int().min(1).max(12).optional() }).parse(req.body)
+  const courseCode = parsed.course_code.trim().toUpperCase()
+  const subjectCode = parsed.subject_code.trim().toUpperCase()
+  const course = await prisma.course.findUnique({ where: { course_code: courseCode } })
+  if (!course) return res.status(404).json({ error: 'Course not found' })
+  const subject = await prisma.subject.findUnique({ where: { subject_code: subjectCode } })
+  if (!subject) return res.status(404).json({ error: 'Subject not found' })
+  if (req.session?.role === 'CA') {
+    const inst = req.session.institute
+    if (!inst) return res.status(403).json({ error: 'College Admin is not mapped to an institute' })
+    const allowed = await prisma.instCourse.findUnique({ where: { inst_short_name_course_code: { inst_short_name: inst, course_code: courseCode } } })
+    if (!allowed) return res.status(403).json({ error: 'College Admin can only map subjects for their institute' })
+  }
+  const existing = await prisma.courseSubject.findUnique({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } } })
+  if (existing) return res.status(409).json({ error: 'Course-subject mapping already exists' })
+  const created = await prisma.courseSubject.create({ data: { course_code: courseCode, subject_code: subjectCode, study_year: parsed.study_year, semester: parsed.semester } })
+  return res.status(201).json(created)
+})
+
+app.put('/api/course-subjects/:course_code/:subject_code', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const courseCode = String(req.params.course_code).trim().toUpperCase()
+  const subjectCode = String(req.params.subject_code).trim().toUpperCase()
+  const existing = await prisma.courseSubject.findUnique({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } } })
+  if (!existing) return res.status(404).json({ error: 'Course-subject mapping not found' })
+  if (req.session?.role === 'CA') {
+    const inst = req.session.institute
+    if (!inst) return res.status(403).json({ error: 'College Admin is not mapped to an institute' })
+    const allowed = await prisma.instCourse.findUnique({ where: { inst_short_name_course_code: { inst_short_name: inst, course_code: courseCode } } })
+    if (!allowed) return res.status(403).json({ error: 'College Admin can only update mappings for their institute' })
+  }
+  const parsed = z.object({ study_year: z.coerce.number().int().min(1).max(8).nullable().optional(), semester: z.coerce.number().int().min(1).max(12).nullable().optional() }).parse(req.body)
+  const updated = await prisma.courseSubject.update({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } }, data: { study_year: parsed.study_year ?? existing.study_year, semester: parsed.semester ?? existing.semester } })
+  return res.json(updated)
+})
+
+app.delete('/api/course-subjects/:course_code/:subject_code', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const courseCode = String(req.params.course_code).trim().toUpperCase()
+  const subjectCode = String(req.params.subject_code).trim().toUpperCase()
+  if (req.session?.role === 'CA') {
+    const inst = req.session.institute
+    if (!inst) return res.status(403).json({ error: 'College Admin is not mapped to an institute' })
+    const allowed = await prisma.instCourse.findUnique({ where: { inst_short_name_course_code: { inst_short_name: inst, course_code: courseCode } } })
+    if (!allowed) return res.status(403).json({ error: 'College Admin can only delete mappings for their institute' })
+  }
+  const existing = await prisma.courseSubject.findUnique({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } } })
+  if (!existing) return res.status(404).json({ error: 'Course-subject mapping not found' })
+  await prisma.courseSubject.delete({ where: { course_code_subject_code: { course_code: courseCode, subject_code: subjectCode } } })
+  return res.status(204).send()
+})
+
+app.get('/api/faculty-available-subjects', auth, async (req: AuthedRequest, res) => {
+  if (req.session?.role !== 'FAC' || !req.session.institute) return res.json([])
+  const courseCodes = (await prisma.instCourse.findMany({ where: { inst_short_name: req.session.institute }, select: { course_code: true } })).map(item => item.course_code)
+  const assigned = new Set((await prisma.facultySubject.findMany({ where: { PAN: req.session.user_name }, select: { subject_code: true } })).map(item => item.subject_code))
+  const rows = await prisma.courseSubject.findMany({ where: { course_code: { in: courseCodes } }, include: { subject: true }, orderBy: [{ course_code: 'asc' }, { subject_code: 'asc' }] })
+  return res.json(rows.filter(row => !assigned.has(row.subject_code)).map(row => ({ ...row, subject: row.subject })))
 })
 
 // SEARCH ENDPOINT - role-scoped
