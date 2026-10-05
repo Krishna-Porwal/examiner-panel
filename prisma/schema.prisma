@@ -39,7 +39,7 @@ model User {
 }
 
 model Course {
-  course_code       String          @id @db.VarChar(3)
+  course_code       String          @id @db.VarChar(191)
   course_short_name String?         @db.VarChar(10)
   course_full_name  String?         @db.VarChar(100)
   institutes        InstCourse[]
@@ -73,7 +73,7 @@ model Subject {
 
 model InstCourse {
   inst_short_name String    @db.VarChar(10)
-  course_code     String    @db.VarChar(3)
+  course_code     String    @db.VarChar(191)
   intake          Int?      @db.SmallInt
   strength        Int?      @db.SmallInt
   institute       Institute @relation(fields: [inst_short_name], references: [inst_short_name])
@@ -84,7 +84,7 @@ model InstCourse {
 }
 
 model CourseSubject {
-  course_code  String  @db.VarChar(3)
+  course_code  String  @db.VarChar(191)
   subject_code String  @db.VarChar(10)
   study_year   Int?    @db.TinyInt
   semester     Int?    @db.TinyInt

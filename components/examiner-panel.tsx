@@ -98,9 +98,6 @@ function downloadCsv(filename: string, headers: string[], rows: Record<string, a
 }
 const roleLabels: Record<string, string> = { CE: 'Programme Coordinator', CA: 'College Admin', FAC: 'College User' }
 const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['Dashboard', 'Faculty', 'Courses', 'Subjects'] }
-const IPU_ENGINEERING_COURSE_CODES = new Set(['BTE', 'MTE', 'CSE', 'ECE', 'EEE', 'ME', 'CE', 'IT', 'CHE', 'EIE'])
-const NON_ENGINEERING_COURSE_TOKENS = ['bba', 'mba', 'bca', 'ba', 'b.com', 'law', 'pharmacy', 'medical', 'mbbs', 'commerce', 'management']
-
 function ErrorAlert({ msg }: { msg: string }) {
   return msg ? <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{msg}</div> : null
 }
@@ -312,15 +309,15 @@ function InstituteForm({ inst, onClose, onSubmit, role }: any) {
 }
 
 function CourseForm({ course, onClose, onSubmit }: any) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-lg rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{course?.course_code ? 'Edit' : 'Add'} Course</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4"><label className="block"><span className="text-sm font-medium text-foreground">Course Code</span><input name="course_code" defaultValue={course?.course_code ?? ''} required readOnly={Boolean(course?.course_code)} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70" /></label><label className="block"><span className="text-sm font-medium text-foreground">Course Short Name</span><input name="course_short_name" defaultValue={course?.course_short_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Course Full Name</span><input name="course_full_name" defaultValue={course?.course_full_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label></div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-lg rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{course?.course_code ? 'Edit' : 'Add'} Course</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4"><label className="block"><span className="text-sm font-medium text-foreground">Course Code</span><input name="course_code" defaultValue={course?.course_code ?? ''} required className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Course Short Name</span><input name="course_short_name" defaultValue={course?.course_short_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Course Full Name</span><input name="course_full_name" defaultValue={course?.course_full_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label></div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
 }
 
 function SpecializationForm({ item, onClose, onSubmit }: any) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-lg rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{item?.spec_id ? 'Edit' : 'Add'} Specialization</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4"><label className="block"><span className="text-sm font-medium text-foreground">spec_id</span><input name="spec_id" type="number" defaultValue={item?.spec_id ?? ''} required readOnly={Boolean(item?.spec_id)} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70" /></label><label className="block"><span className="text-sm font-medium text-foreground">spec_name</span><input name="spec_name" defaultValue={item?.spec_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label></div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-lg rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{item?.spec_id ? 'Edit' : 'Add'} Specialization</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="space-y-3 mb-4"><label className="block"><span className="text-sm font-medium text-foreground">spec_id</span><input name="spec_id" type="number" min={1} max={255} defaultValue={item?.spec_id ?? ''} required className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">spec_name</span><input name="spec_name" defaultValue={item?.spec_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label></div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
 }
 
 function SubjectForm({ item, onClose, onSubmit, specializations }: any) {
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-xl rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{item?.subject_code ? 'Edit' : 'Add'} Subject</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="grid gap-3 md:grid-cols-2 mb-4"><label className="block"><span className="text-sm font-medium text-foreground">Subject Code</span><input name="subject_code" defaultValue={item?.subject_code ?? ''} required readOnly={Boolean(item?.subject_code)} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70" /></label><label className="block"><span className="text-sm font-medium text-foreground">Sub Subject Codes</span><input name="sub_subject_codes" defaultValue={item?.sub_subject_codes ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Short Name</span><input name="subject_short_name" defaultValue={item?.subject_short_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Full Name</span><input name="subject_full_name" defaultValue={item?.subject_full_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Semester</span><input name="semester" type="number" defaultValue={item?.semester ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Specialization</span><select name="spec_id" defaultValue={item?.spec_id ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground"><option value="">Select specialization</option>{specializations.map((s: Specialization) => <option key={s.spec_id} value={String(s.spec_id)}>{s.spec_name || s.spec_id}</option>)}</select></label></div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
+  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-xl rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{item?.subject_code ? 'Edit' : 'Add'} Subject</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="grid gap-3 md:grid-cols-2 mb-4"><label className="block"><span className="text-sm font-medium text-foreground">Subject Code</span><input name="subject_code" defaultValue={item?.subject_code ?? ''} required maxLength={10} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Sub Subject Codes</span><input name="sub_subject_codes" defaultValue={item?.sub_subject_codes ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Short Name</span><input name="subject_short_name" defaultValue={item?.subject_short_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Full Name</span><input name="subject_full_name" defaultValue={item?.subject_full_name ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Semester</span><input name="semester" type="number" defaultValue={item?.semester ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground" /></label><label className="block"><span className="text-sm font-medium text-foreground">Specialization</span><select name="spec_id" defaultValue={item?.spec_id ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground"><option value="">Select specialization</option>{specializations.map((s: Specialization) => <option key={s.spec_id} value={String(s.spec_id)}>{s.spec_name || s.spec_id}</option>)}</select></label></div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
 }
 
 export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelProps) {
@@ -677,15 +674,12 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     try {
       const payload = sanitizeFormPayload(e.currentTarget)
       const courseCode = String(payload.course_code ?? '').trim().toUpperCase()
-      const courseShortName = typeof payload.course_short_name === 'string' ? payload.course_short_name : undefined
-      const courseFullName = typeof payload.course_full_name === 'string' ? payload.course_full_name : undefined
-      validateEngineeringCourse(courseCode, courseFullName, courseShortName)
       const isCreate = !editingCourse || !editingCourse.course_code
       const saved = await request(isCreate ? '/api/courses' : `/api/courses/${encodeURIComponent(editingCourse!.course_code)}`, {
         method: isCreate ? 'POST' : 'PUT',
         body: JSON.stringify({ ...payload, course_code: courseCode }),
       })
-      setCourses(rows => (isCreate ? [...rows, saved] : rows.map(row => (row.course_code === saved.course_code ? saved : row))))
+      setCourses(rows => (isCreate ? [...rows, saved] : rows.map(row => (row.course_code === editingCourse!.course_code ? saved : row))))
       setEditingCourse(null)
       setNotice('Course saved successfully.')
       await loadData()
@@ -708,7 +702,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         method: isCreate ? 'POST' : 'PUT',
         body: JSON.stringify({ ...payload, spec_id: Number(payload.spec_id) }),
       })
-      setSpecializations(rows => (isCreate ? [...rows, saved] : rows.map(row => (row.spec_id === saved.spec_id ? saved : row))))
+      setSpecializations(rows => (isCreate ? [...rows, saved] : rows.map(row => (row.spec_id === editingSpec!.spec_id ? saved : row))))
       setEditingSpec(null)
       setNotice('Specialization saved successfully.')
       await loadData()
@@ -736,7 +730,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         method: isCreate ? 'POST' : 'PUT',
         body: JSON.stringify(safePayload),
       })
-      setSubjects(rows => (isCreate ? [...rows, saved] : rows.map(row => (row.subject_code === saved.subject_code ? saved : row))))
+      setSubjects(rows => (isCreate ? [...rows, saved] : rows.map(row => (row.subject_code === editingSubject!.subject_code ? saved : row))))
       setEditingSubject(null)
       setNotice('Subject saved successfully.')
       await loadData()
@@ -1095,7 +1089,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         course_short_name: row.course_short_name ?? row.courseShortName ?? '',
         course_full_name: row.course_full_name ?? row.courseFullName ?? '',
       }
-      validateEngineeringCourse(courseCode, payload.course_full_name, payload.course_short_name)
       await request('/api/courses', { method: 'POST', body: JSON.stringify(payload) })
     }
     setNotice('Course CSV imported successfully.')
@@ -1762,7 +1755,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-subjects')?.click()}>Upload</Button>
                     <Button size="sm" onClick={() => setEditingSubject({ subject_code: '', subject_short_name: '', subject_full_name: '', semester: undefined, spec_id: undefined, sub_subject_codes: '' })}>Add</Button>
                   </div>
-                  <div className="space-y-2">{visibleSubjects.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleSubjects.map(item => <div key={item.subject_code} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium font-mono">{item.subject_code}</div><div className="text-sm text-muted-foreground">{item.subject_full_name || item.subject_short_name}</div></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditingSubject(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSubject(item.subject_code)}>Delete</Button></div></div>)}</div>
+                  <div className="space-y-2">{visibleSubjects.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleSubjects.map(item => <div key={item.subject_code} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium font-mono">{item.subject_code}</div><div className="text-sm text-muted-foreground">{item.subject_full_name || item.subject_short_name}</div></div>{isCentralExaminer && <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditingSubject(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSubject(item.subject_code)}>Delete</Button></div>}</div>)}</div>
                 </div>
               )}
 
@@ -2016,17 +2009,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       )}
     </div>
   )
-}
-
-function validateEngineeringCourse(courseCode: string, courseFullName?: string, courseShortName?: string) {
-  const normalizedCode = String(courseCode ?? '').trim().toUpperCase()
-  const normalizedName = String(courseFullName ?? courseShortName ?? '').trim().toLowerCase()
-  if (!normalizedCode || !IPU_ENGINEERING_COURSE_CODES.has(normalizedCode)) {
-    throw new Error('Only IPU engineering course codes are supported (BTE, MTE, CSE, ECE, EEE, ME, CE, IT, CHE, EIE).')
-  }
-  if (normalizedName && NON_ENGINEERING_COURSE_TOKENS.some(token => normalizedName.includes(token))) {
-    throw new Error('Only engineering courses are supported for this IPU engineering system.')
-  }
 }
 
 function normalizeSearchValue(value: string) {

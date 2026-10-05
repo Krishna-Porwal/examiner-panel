@@ -101,18 +101,6 @@ async function findInstituteByCode(instShortName) {
     const rows = await prisma.institute.findMany();
     return rows.find(row => normalizeUserName(row.inst_short_name) === normalized) ?? null;
 }
-const IPU_ENGINEERING_COURSE_CODES = new Set(['BTE', 'MTE', 'CSE', 'ECE', 'EEE', 'ME', 'CE', 'IT', 'CHE', 'EIE']);
-const NON_ENGINEERING_TOKENS = ['bba', 'mba', 'bca', 'ba', 'b.com', 'law', 'pharmacy', 'medical', 'mbbs', 'commerce', 'management'];
-function enforceIpuEngineeringCourse(courseCode, courseFullName, courseShortName) {
-    const normalizedCode = String(courseCode ?? '').trim().toUpperCase();
-    const normalizedName = String(courseFullName ?? courseShortName ?? '').trim().toLowerCase();
-    if (!normalizedCode || !IPU_ENGINEERING_COURSE_CODES.has(normalizedCode)) {
-        throw new Error('Only IPU engineering courses are supported. Use an engineering course code like BTE, MTE, CSE, ECE, EEE, ME, CE, IT, CHE, or EIE.');
-    }
-    if (normalizedName && NON_ENGINEERING_TOKENS.some(token => normalizedName.includes(token))) {
-        throw new Error('Only engineering programs are supported for this IPU engineering system.');
-    }
-}
 app.post('/api/auth/login', async (req, res) => {
     const parsed = zod_1.z.object({ user_name: zod_1.z.string().trim().min(1).max(10), role: zod_1.z.enum(['CE', 'CA', 'FAC']), password: zod_1.z.string().min(1) }).safeParse(req.body);
     if (!parsed.success)
@@ -550,7 +538,7 @@ app.get('/api/courses', auth, async (req, res) => {
 });
 app.post('/api/courses', auth, allow('CE'), async (req, res) => {
     const parsed = zod_1.z.object({
-        course_code: zod_1.z.string().trim().min(1).max(3),
+        course_code: zod_1.z.string().trim().min(1),
         course_short_name: zod_1.z.string().trim().max(10).optional(),
         course_full_name: zod_1.z.string().trim().max(100).optional(),
     }).parse(req.body);
@@ -562,7 +550,6 @@ app.post('/api/courses', auth, allow('CE'), async (req, res) => {
     const existing = await prisma.course.findUnique({ where: { course_code: courseCode } });
     if (existing)
         return res.status(409).json({ error: 'Course already exists' });
-    enforceIpuEngineeringCourse(courseCode, courseFullName, courseShortName);
     const created = await prisma.course.create({ data: { course_code: courseCode, course_short_name: courseShortName, course_full_name: courseFullName } });
     return res.status(201).json(created);
 });
@@ -572,11 +559,16 @@ app.put('/api/courses/:course_code', auth, allow('CE'), async (req, res) => {
     if (!existing)
         return res.status(404).json({ error: 'Course not found' });
     const parsed = zod_1.z.object({
-        course_code: zod_1.z.string().trim().max(3).optional(),
+        course_code: zod_1.z.string().trim().min(1).optional(),
         course_short_name: zod_1.z.string().trim().max(10).optional(),
         course_full_name: zod_1.z.string().trim().max(100).optional(),
     }).parse(req.body);
     const nextCode = (parsed.course_code ?? courseCode).trim().toUpperCase();
+    if (nextCode !== courseCode) {
+        const codeConflict = await prisma.course.findUnique({ where: { course_code: nextCode } });
+        if (codeConflict)
+            return res.status(409).json({ error: 'Course code already exists' });
+    }
     const data = { ...parsed, course_code: nextCode, course_short_name: parsed.course_short_name?.trim(), course_full_name: parsed.course_full_name?.trim() };
     const updated = await prisma.course.update({ where: { course_code: courseCode }, data });
     return res.json(updated);
@@ -606,7 +598,7 @@ app.get('/api/subjects', auth, async (req, res) => {
     }
     return res.json(rows);
 });
-app.post('/api/subjects', auth, allow('CE'), async (req, res) => {
+app.post('/api/subjects', auth, allow('CE', 'CA'), async (req, res) => {
     const parsed = zod_1.z.object({
         subject_code: zod_1.z.string().trim().min(1).max(10),
         sub_subject_codes: zod_1.z.string().trim().max(100).optional(),
@@ -637,7 +629,7 @@ app.put('/api/subjects/:subject_code', auth, allow('CE'), async (req, res) => {
     if (!existing)
         return res.status(404).json({ error: 'Subject not found' });
     const parsed = zod_1.z.object({
-        subject_code: zod_1.z.string().trim().max(10).optional(),
+        subject_code: zod_1.z.string().trim().min(1).max(10).optional(),
         sub_subject_codes: zod_1.z.string().trim().max(100).optional(),
         subject_short_name: zod_1.z.string().trim().max(10).optional(),
         subject_full_name: zod_1.z.string().trim().max(100).optional(),
@@ -645,6 +637,11 @@ app.put('/api/subjects/:subject_code', auth, allow('CE'), async (req, res) => {
         spec_id: zod_1.z.coerce.number().int().min(1).max(255).optional(),
     }).parse(req.body);
     const nextCode = (parsed.subject_code ?? subjectCode).trim().toUpperCase();
+    if (nextCode !== subjectCode) {
+        const codeConflict = await prisma.subject.findUnique({ where: { subject_code: nextCode } });
+        if (codeConflict)
+            return res.status(409).json({ error: 'Subject code already exists' });
+    }
     const updated = await prisma.subject.update({ where: { subject_code: subjectCode }, data: { ...parsed, subject_code: nextCode, sub_subject_codes: parsed.sub_subject_codes?.trim(), subject_short_name: parsed.subject_short_name?.trim(), subject_full_name: parsed.subject_full_name?.trim() } });
     return res.json(updated);
 });
@@ -678,6 +675,11 @@ app.put('/api/specializations/:spec_id', auth, allow('CE'), async (req, res) => 
     if (!existing)
         return res.status(404).json({ error: 'Specialization not found' });
     const parsed = zod_1.z.object({ spec_id: zod_1.z.coerce.number().int().min(1).max(255).optional(), spec_name: zod_1.z.string().trim().max(30).optional() }).parse(req.body);
+    if (parsed.spec_id !== undefined && parsed.spec_id !== specId) {
+        const idConflict = await prisma.specialization.findUnique({ where: { spec_id: parsed.spec_id } });
+        if (idConflict)
+            return res.status(409).json({ error: 'Specialization ID already exists' });
+    }
     const updated = await prisma.specialization.update({ where: { spec_id: specId }, data: { ...parsed, spec_id: parsed.spec_id ?? specId, spec_name: parsed.spec_name?.trim() } });
     return res.json(updated);
 });
@@ -704,7 +706,7 @@ app.get('/api/inst-courses', auth, async (req, res) => {
     return res.json(rows);
 });
 app.post('/api/inst-courses', auth, allow('CE', 'CA'), async (req, res) => {
-    const parsed = zod_1.z.object({ inst_short_name: zod_1.z.string().trim().min(1).max(10), course_code: zod_1.z.string().trim().min(1).max(3), intake: zod_1.z.coerce.number().int().min(0).optional(), strength: zod_1.z.coerce.number().int().min(0).optional() }).parse(req.body);
+    const parsed = zod_1.z.object({ inst_short_name: zod_1.z.string().trim().min(1).max(10), course_code: zod_1.z.string().trim().min(1), intake: zod_1.z.coerce.number().int().min(0).optional(), strength: zod_1.z.coerce.number().int().min(0).optional() }).parse(req.body);
     if (req.session?.role === 'CA') {
         if (!req.session.institute)
             return res.status(403).json({ error: 'College Admin is not mapped to an institute' });
@@ -746,7 +748,7 @@ app.get('/api/course-subjects', auth, async (req, res) => {
     return res.json(rows);
 });
 app.post('/api/course-subjects', auth, allow('CE', 'CA'), async (req, res) => {
-    const parsed = zod_1.z.object({ course_code: zod_1.z.string().trim().min(1).max(3), subject_code: zod_1.z.string().trim().min(1).max(10), study_year: zod_1.z.coerce.number().int().min(1).max(8).optional(), semester: zod_1.z.coerce.number().int().min(1).max(12).optional() }).parse(req.body);
+    const parsed = zod_1.z.object({ course_code: zod_1.z.string().trim().min(1), subject_code: zod_1.z.string().trim().min(1).max(10), study_year: zod_1.z.coerce.number().int().min(1).max(8).optional(), semester: zod_1.z.coerce.number().int().min(1).max(12).optional() }).parse(req.body);
     const courseCode = parsed.course_code.trim().toUpperCase();
     const subjectCode = parsed.subject_code.trim().toUpperCase();
     const course = await prisma.course.findUnique({ where: { course_code: courseCode } });
