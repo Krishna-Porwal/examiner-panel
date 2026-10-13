@@ -94,19 +94,30 @@ async function findInstituteByCode(instShortName: string) {
 }
 
 app.post('/api/auth/login', async (req, res) => { 
-  const parsed = z.object({ user_name: z.string().trim().min(1).max(10), role: z.enum(['CE', 'CA', 'FAC']), password: z.string().min(1) }).safeParse(req.body); 
-  if (!parsed.success) return res.status(400).json({ error: 'Enter the username, role, and password.' }); 
-  const user = await findUserByCredential(parsed.data.user_name, parsed.data.role); 
-  if (!user || !(await bcrypt.compare(parsed.data.password.trim(), user.password))) return res.status(401).json({ error: 'Invalid username, role, or password.' }); 
-  
-  let institute: string | undefined
-  if (user.role === 'CA' || user.role === 'FAC') {
-    institute = await resolveInstituteForUser(user.user_name, user.role as Role)
-    if (!institute) return res.status(401).json({ error: 'This account is not mapped to a valid institute.' })
+  try {
+    const parsed = z.object({ user_name: z.string().trim().min(1).max(10), role: z.enum(['CE', 'CA', 'FAC']), password: z.string().min(1) }).safeParse(req.body); 
+    if (!parsed.success) return res.status(400).json({ error: 'Enter the username, role, and password.' }); 
+    const user = await findUserByCredential(parsed.data.user_name, parsed.data.role); 
+    if (!user || !(await bcrypt.compare(parsed.data.password.trim(), user.password))) return res.status(401).json({ error: 'Invalid username, role, or password.' }); 
+    
+    let institute: string | undefined
+    if (user.role === 'CA' || user.role === 'FAC') {
+      institute = await resolveInstituteForUser(user.user_name, user.role as Role)
+      if (!institute) return res.status(401).json({ error: 'This account is not mapped to a valid institute.' })
+    }
+    
+    const session: Session = { user_name: user.user_name, role: user.role as Role, institute }; 
+    return res.json({ token: jwt.sign(session, jwtSecret, { expiresIn: '8h' }), user: { user_name: user.user_name, role: user.role, institute } }) 
+  } catch (error) {
+    console.error('Login failed:', error)
+    const message = error instanceof Error ? error.message : 'Unknown error'
+    const isDbIssue = /Authentication failed against the database server|Can't reach database server|Database .* does not exist|ECONNREFUSED|access denied|Client authentication|database/i.test(message)
+    return res.status(isDbIssue ? 503 : 500).json({
+      error: isDbIssue
+        ? 'Database is unavailable. Check MySQL service and credentials.'
+        : 'Login failed due to a server error.'
+    })
   }
-  
-  const session: Session = { user_name: user.user_name, role: user.role as Role, institute }; 
-  return res.json({ token: jwt.sign(session, jwtSecret, { expiresIn: '8h' }), user: { user_name: user.user_name, role: user.role, institute } }) 
 })
 app.get('/api/auth/me', auth, (req: AuthedRequest, res) => res.json({ user: req.session }))
 app.post('/api/auth/logout', auth, (_req, res) => res.status(204).send())

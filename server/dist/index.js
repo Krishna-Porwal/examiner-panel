@@ -102,20 +102,32 @@ async function findInstituteByCode(instShortName) {
     return rows.find(row => normalizeUserName(row.inst_short_name) === normalized) ?? null;
 }
 app.post('/api/auth/login', async (req, res) => {
-    const parsed = zod_1.z.object({ user_name: zod_1.z.string().trim().min(1).max(10), role: zod_1.z.enum(['CE', 'CA', 'FAC']), password: zod_1.z.string().min(1) }).safeParse(req.body);
-    if (!parsed.success)
-        return res.status(400).json({ error: 'Enter the username, role, and password.' });
-    const user = await findUserByCredential(parsed.data.user_name, parsed.data.role);
-    if (!user || !(await bcryptjs_1.default.compare(parsed.data.password.trim(), user.password)))
-        return res.status(401).json({ error: 'Invalid username, role, or password.' });
-    let institute;
-    if (user.role === 'CA' || user.role === 'FAC') {
-        institute = await resolveInstituteForUser(user.user_name, user.role);
-        if (!institute)
-            return res.status(401).json({ error: 'This account is not mapped to a valid institute.' });
+    try {
+        const parsed = zod_1.z.object({ user_name: zod_1.z.string().trim().min(1).max(10), role: zod_1.z.enum(['CE', 'CA', 'FAC']), password: zod_1.z.string().min(1) }).safeParse(req.body);
+        if (!parsed.success)
+            return res.status(400).json({ error: 'Enter the username, role, and password.' });
+        const user = await findUserByCredential(parsed.data.user_name, parsed.data.role);
+        if (!user || !(await bcryptjs_1.default.compare(parsed.data.password.trim(), user.password)))
+            return res.status(401).json({ error: 'Invalid username, role, or password.' });
+        let institute;
+        if (user.role === 'CA' || user.role === 'FAC') {
+            institute = await resolveInstituteForUser(user.user_name, user.role);
+            if (!institute)
+                return res.status(401).json({ error: 'This account is not mapped to a valid institute.' });
+        }
+        const session = { user_name: user.user_name, role: user.role, institute };
+        return res.json({ token: jsonwebtoken_1.default.sign(session, jwtSecret, { expiresIn: '8h' }), user: { user_name: user.user_name, role: user.role, institute } });
     }
-    const session = { user_name: user.user_name, role: user.role, institute };
-    return res.json({ token: jsonwebtoken_1.default.sign(session, jwtSecret, { expiresIn: '8h' }), user: { user_name: user.user_name, role: user.role, institute } });
+    catch (error) {
+        console.error('Login failed:', error);
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        const isDbIssue = /Authentication failed against the database server|Can't reach database server|Database .* does not exist|ECONNREFUSED|access denied|Client authentication|database/i.test(message);
+        return res.status(isDbIssue ? 503 : 500).json({
+            error: isDbIssue
+                ? 'Database is unavailable. Check MySQL service and credentials.'
+                : 'Login failed due to a server error.'
+        });
+    }
 });
 app.get('/api/auth/me', auth, (req, res) => res.json({ user: req.session }));
 app.post('/api/auth/logout', auth, (_req, res) => res.status(204).send());
