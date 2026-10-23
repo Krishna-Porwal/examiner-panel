@@ -4,6 +4,7 @@ const path = require('path');
 const rootDir = path.resolve(__dirname, '..');
 const prismaDir = path.join(rootDir, 'node_modules', '.prisma');
 const clientDir = path.join(rootDir, 'node_modules', '@prisma', 'client');
+const pnpmPrismaClientDir = path.join(rootDir, 'node_modules', '.pnpm');
 
 let removed = 0;
 
@@ -29,24 +30,54 @@ function safeRemove(targetPath, type) {
   console.warn(`Cleanup for ${type} exceeded retries: ${targetPath}`);
 }
 
+function removeTempEngineFiles(dir, label) {
+  if (!fs.existsSync(dir)) return;
+
+  const queue = [dir];
+  while (queue.length > 0) {
+    const current = queue.pop();
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (error) {
+      if (error && (error.code === 'EPERM' || error.code === 'EBUSY')) {
+        console.warn(`Skipping ${label} due to file lock: ${current}`);
+      }
+      continue;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        queue.push(fullPath);
+        continue;
+      }
+
+      if (/\.tmp\d*$|\.tmp$/.test(entry.name) || /^query_engine-windows\.dll\.node(?:\.tmp\d+)?$/.test(entry.name)) {
+        try {
+          fs.rmSync(fullPath, { force: true });
+          console.log(`Removed stale Prisma temp file: ${path.relative(rootDir, fullPath)}`);
+          removed += 1;
+        } catch (error) {
+          if (error && error.code !== 'ENOENT') {
+            console.warn(`Unable to remove stale Prisma temp file: ${path.relative(rootDir, fullPath)} (${error.message})`);
+          }
+        }
+      }
+    }
+  }
+}
+
 if (fs.existsSync(prismaDir)) {
   safeRemove(prismaDir, 'Prisma cache');
 }
 
 if (fs.existsSync(clientDir)) {
-  const tempFiles = fs.readdirSync(clientDir).filter((name) => /\.tmp\d*|\.tmp$/.test(name) || /^query_engine-windows\.dll\.node(?:\.tmp\d+)?$/.test(name));
-  for (const file of tempFiles) {
-    const fullPath = path.join(clientDir, file);
-    try {
-      fs.rmSync(fullPath, { force: true });
-      console.log(`Removed stale Prisma temp file: ${path.relative(rootDir, fullPath)}`);
-      removed += 1;
-    } catch (error) {
-      if (error && error.code !== 'ENOENT') {
-        console.warn(`Unable to remove stale Prisma temp file: ${path.relative(rootDir, fullPath)} (${error.message})`);
-      }
-    }
-  }
+  removeTempEngineFiles(clientDir, 'Prisma client directory');
+}
+
+if (fs.existsSync(pnpmPrismaClientDir)) {
+  removeTempEngineFiles(pnpmPrismaClientDir, 'pnpm Prisma store');
 }
 
 if (removed === 0) {

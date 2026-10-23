@@ -21,7 +21,7 @@ type Specialization = { spec_id: number; spec_name?: string }
 type FacultySubjectMap = { PAN: string; subject_code: string; entered_by?: string; entered_on?: string }
 type FacultySpecMap = { PAN: string; spec_id: number; entered_by?: string; entered_on?: string }
 type InstCourseMap = { inst_short_name: string; course_code: string; intake?: number; strength?: number }
-type CourseSubjectMap = { course_code: string; subject_code: string; study_year?: number | null; semester?: number | null }
+type CourseSubjectMap = { course_code: string; subject_code: string; study_year?: number | null; semester?: number | null; inst_short_names?: string[] }
 
 type UserPayload = { user_name: string; password: string; role: 'CA' | 'FAC' }
 type UserCredential = { user_name: string; role: string }
@@ -97,7 +97,7 @@ function downloadCsv(filename: string, headers: string[], rows: Record<string, a
   URL.revokeObjectURL(url)
 }
 const roleLabels: Record<string, string> = { CE: 'Programme Coordinator', CA: 'College Admin', FAC: 'College User' }
-const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['Dashboard', 'Faculty', 'Courses', 'Subjects'] }
+const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['Dashboard', 'Faculty', 'Courses', 'Specializations', 'Subjects'] }
 function ErrorAlert({ msg }: { msg: string }) {
   return msg ? <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{msg}</div> : null
 }
@@ -337,6 +337,13 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [courseSubjectMappings, setCourseSubjectMappings] = useState<CourseSubjectMap[]>([])
   const [showMappingModal, setShowMappingModal] = useState(false)
   const [editingMapping, setEditingMapping] = useState<CourseSubjectMap | null>(null)
+  const [mappingForm, setMappingForm] = useState({
+    course_code: '',
+    subject_code: '',
+    study_year: '',
+    semester: '',
+    inst_short_names: [] as string[],
+  })
   const [selected, setSelected] = useState<Faculty | null>(null)
   const [query, setQuery] = useState('')
   const [searchResults, setSearchResults] = useState<any | null>(null)
@@ -356,6 +363,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [subjectSearch, setSubjectSearch] = useState('')
   const [facultySearch, setFacultySearch] = useState('')
   const [instCourseSearch, setInstCourseSearch] = useState('')
+  const [mappingCollegeSearch, setMappingCollegeSearch] = useState('')
   const [courseSubjectSearch, setCourseSubjectSearch] = useState('')
   const [facultySubjectSearch, setFacultySubjectSearch] = useState('')
   const [facultySpecializationSearch, setFacultySpecializationSearch] = useState('')
@@ -372,6 +380,8 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [facCredential, setFacCredential] = useState<UserPayload>({ user_name: '', password: '', role: 'FAC' })
   const [users, setUsers] = useState<UserCredential[]>([])
   const [credentialFilter, setCredentialFilter] = useState<'ALL' | 'CA' | 'FAC'>('ALL')
+  const [selectedSpec, setSelectedSpec] = useState<Specialization | null>(null)
+  const [selectedSubject, setSelectedSubject] = useState<Subject | null>(null)
 
   const sessionToken = () => typeof window === 'undefined' ? '' : localStorage.getItem('token') ?? ''
 
@@ -484,20 +494,57 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   }, [institutes, instituteSearch, session])
 
   const visibleCourses = useMemo(() => {
-    const scoped = session?.role === 'CA' ? courses.filter(item => instCourseMappings.some(mapping => mapping.inst_short_name === session.institute && mapping.course_code === item.course_code)) : courses
+    const scoped = session?.role === 'CA'
+      ? courses.filter(item => {
+          const mappedByInstitute = instCourseMappings.some(mapping => mapping.inst_short_name === session.institute && mapping.course_code === item.course_code)
+          const mappedByCourseSubject = courseSubjectMappings.some(mapping =>
+            mapping.course_code === item.course_code &&
+            Array.isArray(mapping.inst_short_names) &&
+            mapping.inst_short_names.includes(session.institute ?? '')
+          )
+          return mappedByInstitute || mappedByCourseSubject
+        })
+      : courses
     return scoped.filter(item => matchesSearch(item, courseSearch, ['course_code', 'course_short_name', 'course_full_name']))
-  }, [courses, courseSearch, instCourseMappings, session])
+  }, [courses, courseSearch, instCourseMappings, session, courseSubjectMappings])
 
-  const visibleSpecializations = useMemo(
-    () => specializations.filter(item => matchesSearch(item, specializationSearch, ['spec_id', 'spec_name'])),
-    [specializations, specializationSearch]
-  )
+  const collegeSpecializations = useMemo(() => {
+    if (session?.role !== 'CA' || !session.institute) return [] as Specialization[]
+    const allowedSubjectCodes = new Set(
+      courseSubjectMappings
+        .filter(item => Array.isArray(item.inst_short_names) && item.inst_short_names.includes(session.institute ?? ''))
+        .map(item => item.subject_code)
+    )
+    return specializations.filter((spec: Specialization) => subjects.some((subject: Subject) => subject.spec_id === spec.spec_id && allowedSubjectCodes.has(subject.subject_code)))
+  }, [courseSubjectMappings, session, specializations, subjects])
+
+  const visibleSpecializations = useMemo(() => {
+    const scoped = session?.role === 'CA'
+      ? collegeSpecializations
+      : specializations
+    return scoped.filter((item: Specialization) => matchesSearch(item, specializationSearch, ['spec_id', 'spec_name']))
+  }, [collegeSpecializations, session, specializations, specializationSearch])
 
   const visibleSubjects = useMemo(() => {
     const scoped = session?.role === 'CA'
       ? subjects.filter(item => {
-          const related = courseSubjectMappings.some(mapping => mapping.subject_code === item.subject_code) || instCourseMappings.some(mapping => mapping.inst_short_name === session.institute)
-          return related
+          const mappedByCourseSubject = courseSubjectMappings.some(mapping =>
+            mapping.subject_code === item.subject_code &&
+            Array.isArray(mapping.inst_short_names) &&
+            mapping.inst_short_names.includes(session.institute ?? '')
+          )
+
+          const mappedByInstituteCourse = instCourseMappings.some(mapping =>
+            mapping.inst_short_name === session.institute &&
+            courseSubjectMappings.some(courseSubject =>
+              courseSubject.course_code === mapping.course_code &&
+              courseSubject.subject_code === item.subject_code &&
+              Array.isArray(courseSubject.inst_short_names) &&
+              courseSubject.inst_short_names.includes(session.institute ?? '')
+            )
+          )
+
+          return mappedByCourseSubject || mappedByInstituteCourse
         })
       : subjects
     return scoped.filter(item => matchesSearch(item, subjectSearch, ['subject_code', 'subject_short_name', 'subject_full_name', 'semester', 'spec_id']))
@@ -526,8 +573,10 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const visibleCourseSubjectMappings = useMemo(() => {
     const base = session?.role === 'CA' || session?.role === 'FAC'
       ? courseSubjectMappings.filter(item => {
-          const course = courses.find(courseItem => courseItem.course_code === item.course_code)
-          return course && instCourseMappings.some(mapping => mapping.inst_short_name === session.institute && mapping.course_code === item.course_code)
+          const institute = session.institute ?? ''
+          const directInstituteMatch = Array.isArray(item.inst_short_names) && item.inst_short_names.includes(institute)
+          const courseInstituteMatch = instCourseMappings.some(mapping => mapping.inst_short_name === institute && mapping.course_code === item.course_code)
+          return directInstituteMatch || courseInstituteMatch
         })
       : courseSubjectMappings
 
@@ -897,27 +946,43 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     }
   }
 
-  async function saveCourseSubject(req: { course_code: string; subject_code: string; study_year?: number | null; semester?: number | null }) {
+  async function saveCourseSubject(req: { course_code: string; subject_code: string; study_year?: number | null; semester?: number | null; inst_short_names?: string[] }) {
     setBusy(true)
     setError('')
     setNotice('')
-      try {
+    try {
+      const payload = {
+        course_code: req.course_code,
+        subject_code: req.subject_code,
+        study_year: req.study_year ?? undefined,
+        semester: req.semester ?? undefined,
+        inst_short_names: Array.isArray(req.inst_short_names) ? req.inst_short_names.filter(Boolean) : [],
+      }
+
       if (editingMapping) {
-        // Update existing mapping
         await request(`/api/course-subjects/${encodeURIComponent(editingMapping.course_code)}/${encodeURIComponent(editingMapping.subject_code)}`, {
           method: 'PUT',
-          body: JSON.stringify({ study_year: req.study_year ?? null, semester: req.semester ?? null }),
+          body: JSON.stringify(payload),
         })
         setNotice('Course-subject mapping updated.')
       } else {
-        // Create new mapping
         await request('/api/course-subjects', {
           method: 'POST',
-          body: JSON.stringify({ course_code: req.course_code, subject_code: req.subject_code, study_year: req.study_year ?? undefined, semester: req.semester ?? undefined }),
+          body: JSON.stringify(payload),
         })
         setNotice('Course-subject mapping created.')
       }
       await loadData()
+      const refreshedMapping = {
+        course_code: req.course_code,
+        subject_code: req.subject_code,
+        study_year: req.study_year ?? null,
+        semester: req.semester ?? null,
+        inst_short_names: Array.isArray(req.inst_short_names) ? req.inst_short_names.filter(Boolean) : [],
+      }
+      if (showMappingDetails || mappingDetails) {
+        await openViewMapping(refreshedMapping)
+      }
       setShowMappingModal(false)
       setEditingMapping(null)
     } catch (e) {
@@ -942,23 +1007,12 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   }
 
   async function openEditMapping(mapping: CourseSubjectMap) {
-    setEditingMapping(mapping)
-    setShowMappingModal(true)
-  }
+    const selectedInstituteCodes = Array.isArray(mapping.inst_short_names)
+      ? mapping.inst_short_names
+      : courseSubjectMappings.find((item) => item.course_code === mapping.course_code && item.subject_code === mapping.subject_code)?.inst_short_names ?? []
 
-  async function openViewMapping(mapping: CourseSubjectMap) {
-    try {
-      setError('')
-      setMappingDetails(null)
-      // fetch course details which now returns mapping rows with study_year/semester
-      const details = await request(`/api/courses/${encodeURIComponent(mapping.course_code)}/details`)
-      // find the specific mapping row
-      const mappingRow = Array.isArray(details.subjects) ? details.subjects.find((s: any) => s.subject_code === mapping.subject_code) : null
-      setMappingDetails({ mapping: mappingRow, course: details.course, institutes: details.institutesOffering ?? [], faculty: details.faculty ?? [] })
-      setShowMappingDetails(true)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load mapping details')
-    }
+    setEditingMapping({ ...mapping, inst_short_names: selectedInstituteCodes })
+    setShowMappingModal(true)
   }
 
   async function openAddMapping() {
@@ -966,6 +1020,110 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     setShowMappingModal(true)
   }
 
+  async function openViewMapping(mapping: CourseSubjectMap) {
+    try {
+      setError('')
+      setMappingDetails(null)
+      const [details, subjectDetails] = await Promise.all([
+        request(`/api/courses/${encodeURIComponent(mapping.course_code)}/details`),
+        request(`/api/subjects/${encodeURIComponent(mapping.subject_code)}/details`),
+      ])
+
+      const subjectCode = String(mapping.subject_code)
+      const courseSubjectRow = Array.isArray(details.subjects)
+        ? details.subjects.find((s: any) => String(s.subject_code ?? s.subject?.subject_code ?? '') === subjectCode) ?? null
+        : null
+
+      const rawInstituteRows = [
+        ...(Array.isArray(subjectDetails.institutes) ? subjectDetails.institutes : []),
+        ...(Array.isArray(details.institutesOffering) ? details.institutesOffering : []),
+      ]
+      const instituteRows = rawInstituteRows
+        .map((entry: any) => entry?.institute ?? entry)
+        .filter((institute: any) => institute && institute.inst_short_name)
+        .filter((institute: any, index: number, arr: any[]) => {
+          const key = String(institute.inst_short_name ?? institute.institute?.inst_short_name ?? '')
+          return arr.findIndex((row: any) => String((row?.inst_short_name ?? row?.institute?.inst_short_name ?? '') || '') === key) === index
+        })
+
+      const courseFaculty = Array.isArray(details.faculty) ? details.faculty : []
+      const subjectFaculty = Array.isArray(subjectDetails.faculty) ? subjectDetails.faculty : []
+      const facultyRows = [...new Map(
+        [...courseFaculty, ...subjectFaculty]
+          .map((faculty: any) => [String(faculty.PAN ?? faculty.pan ?? faculty.faculty_id ?? `${faculty.faculty_name ?? 'faculty'}-${faculty.inst_short_name ?? 'inst'}`), faculty])
+      ).values()]
+        .filter((faculty: any) => {
+          const subjectList = Array.isArray(faculty.subjects) ? faculty.subjects : []
+          if (subjectList.length === 0) return true
+          return subjectList.some((item: any) => {
+            const itemCode = String(item.subject_code ?? item.subject?.subject_code ?? '')
+            return itemCode === subjectCode
+          })
+        })
+
+      setMappingDetails({
+        course: details.course,
+        subject: subjectDetails.subject ?? null,
+        mapping: courseSubjectRow ?? {
+          course_code: mapping.course_code,
+          subject_code: subjectCode,
+          study_year: mapping.study_year ?? null,
+          semester: mapping.semester ?? null,
+        },
+        institutes: instituteRows,
+        faculty: facultyRows,
+      })
+      setShowMappingDetails(true)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load mapping details')
+    }
+  }
+
+  async function addCollegeToCourse(instShortName: string, courseCode: string) {
+    if (!instShortName || !courseCode) return
+    try {
+      setBusy(true)
+      await request('/api/inst-courses', {
+        method: 'POST',
+        body: JSON.stringify({ inst_short_name: instShortName, course_code: courseCode }),
+      })
+      setNotice('Institute mapped to the course.')
+      await loadData()
+      if (mappingDetails?.course?.course_code) {
+        await openViewMapping({
+          course_code: mappingDetails.course.course_code,
+          subject_code: mappingDetails.mapping?.subject_code ?? mappingDetails.mapping?.subject?.subject_code,
+        })
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to add institute mapping')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function addFacultyToSubject(PAN: string, subjectCode: string) {
+    if (!PAN || !subjectCode) return
+    try {
+      setBusy(true)
+      await request('/api/faculty-subjects', {
+        method: 'POST',
+        body: JSON.stringify({ PAN, subject_code: subjectCode }),
+      })
+      setNotice('Faculty mapped to the subject.')
+      await loadData()
+      if (mappingDetails?.course?.course_code) {
+        await openViewMapping({
+          course_code: mappingDetails.course.course_code,
+          subject_code: mappingDetails.mapping?.subject_code ?? mappingDetails.mapping?.subject?.subject_code,
+        })
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to add faculty mapping')
+    } finally {
+      setBusy(false)
+    }
+  }
   async function deleteFaculty(pan: string) {
     if (!window.confirm(`Delete faculty ${pan}? This action cannot be undone.`)) return
     setBusy(true)
@@ -1016,41 +1174,24 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         await loadData()
       } catch (e) {
         console.error('Failed to reload data:', e)
-      }
+           }
     }
   }
 
   async function deleteCredential(user_name: string, role: string) {
-    if (!window.confirm(`Revoke ${role === 'CA' ? 'College Admin' : 'Faculty'} credential for "${user_name}"? They will no longer be able to sign in.`)) return
+    if (!window.confirm(`Revoke credential for ${user_name} (${role})?`)) return
     setBusy(true)
     setError('')
-    setNotice('')
     try {
       await request(`/api/users/${encodeURIComponent(user_name)}/${encodeURIComponent(role)}`, { method: 'DELETE' })
-      setNotice(`Credential for "${user_name}" (${role}) revoked.`)
+      setUsers(rows => rows.filter(row => !(row.user_name === user_name && row.role === role)))
+      setNotice('Credential revoked.')
       await loadData()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to revoke credential')
     } finally {
       setBusy(false)
     }
-  }
-
-  async function importCredentialCsv(records: Record<string, string>[]) {
-    for (const row of records) {
-      const userName = normalizeUserName(row.user_name ?? row.UserName ?? row.username ?? '')
-      const roleValue = normalizeCredentialRole(row.role ?? row.Role ?? row.role_name ?? '')
-      const role = roleValue === 'ALL' ? credentialFilter : roleValue
-      const password = String(row.password ?? row.Password ?? row.pass ?? '').trim()
-      if (!userName || role === 'ALL') continue
-      if (password.length < 8) throw new Error(`Password for ${userName} must be at least 8 characters long.`)
-      await request('/api/users', {
-        method: 'POST',
-        body: JSON.stringify({ user_name: userName, role, password }),
-      })
-    }
-    setNotice('Credential CSV imported successfully.')
-    await loadData()
   }
 
   async function importInstitutesCsv(records: Record<string, string>[]) {
@@ -1086,62 +1227,12 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       if (!courseCode) continue
       const payload = {
         course_code: courseCode,
-        course_short_name: row.course_short_name ?? row.courseShortName ?? '',
-        course_full_name: row.course_full_name ?? row.courseFullName ?? '',
+        course_short_name: row.course_short_name ?? '',
+        course_full_name: row.course_full_name ?? '',
       }
       await request('/api/courses', { method: 'POST', body: JSON.stringify(payload) })
     }
     setNotice('Course CSV imported successfully.')
-    await loadData()
-  }
-
-  async function importSpecializationsCsv(records: Record<string, string>[]) {
-    for (const row of records) {
-      const specId = Number(row.spec_id ?? row.specId ?? 0)
-      if (!specId) continue
-      const payload = { spec_id: specId, spec_name: row.spec_name ?? row.specName ?? '' }
-      await request('/api/specializations', { method: 'POST', body: JSON.stringify(payload) })
-    }
-    setNotice('Specialization CSV imported successfully.')
-    await loadData()
-  }
-
-  async function importSubjectsCsv(records: Record<string, string>[]) {
-    for (const row of records) {
-      const subjectCode = String(row.subject_code ?? row.subjectCode ?? '').trim()
-      if (!subjectCode) continue
-      const payload = {
-        subject_code: subjectCode,
-        subject_short_name: row.subject_short_name ?? row.subjectShortName ?? '',
-        subject_full_name: row.subject_full_name ?? row.subjectFullName ?? '',
-        semester: row.semester ? Number(row.semester) : undefined,
-        spec_id: row.spec_id ? Number(row.spec_id) : undefined,
-        sub_subject_codes: row.sub_subject_codes ?? row.subSubjectCodes ?? '',
-      }
-      await request('/api/subjects', { method: 'POST', body: JSON.stringify(payload) })
-    }
-    setNotice('Subject CSV imported successfully.')
-    await loadData()
-  }
-
-  async function importFacultyCsv(records: Record<string, string>[]) {
-    for (const row of records) {
-      const pan = String(row.PAN ?? row.pan ?? '').trim().toUpperCase()
-      if (!pan) continue
-      const payload = {
-        PAN: pan,
-        Title: row.Title ?? '',
-        faculty_name: row.faculty_name ?? row.name ?? '',
-        inst_short_name: row.inst_short_name ?? row.instShortName ?? session?.institute ?? '',
-        faculty_desig: row.faculty_desig ?? row.designation ?? '',
-        faculty_total_exp: row.faculty_total_exp ? Number(row.faculty_total_exp) : undefined,
-        faculty_address: row.faculty_address ?? row.address ?? '',
-        faculty_Email: row.faculty_Email ?? row.email ?? '',
-        faculty_MobileNo: row.faculty_MobileNo ?? row.mobile ?? '',
-      }
-      await request('/api/faculty', { method: 'POST', body: JSON.stringify(payload) })
-    }
-    setNotice('Faculty CSV imported successfully.')
     await loadData()
   }
 
@@ -1189,14 +1280,73 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     await loadData()
   }
 
+  async function importSpecializationsCsv(records: Record<string, string>[]) {
+    for (const row of records) {
+      const specId = Number(row.spec_id ?? row.specId ?? 0)
+      const specName = String(row.spec_name ?? row.specName ?? '').trim()
+      if (!specId && !specName) continue
+      await request('/api/specializations', {
+        method: 'POST',
+        body: JSON.stringify({
+          spec_id: specId || undefined,
+          spec_name: specName || undefined,
+        }),
+      })
+    }
+    setNotice('Specialization CSV imported successfully.')
+    await loadData()
+  }
+
+  async function importSubjectsCsv(records: Record<string, string>[]) {
+    for (const row of records) {
+      const subjectCode = String(row.subject_code ?? row.subjectCode ?? '').trim()
+      if (!subjectCode) continue
+      await request('/api/subjects', {
+        method: 'POST',
+        body: JSON.stringify({
+          subject_code: subjectCode,
+          subject_short_name: row.subject_short_name ?? row.subjectShortName ?? '',
+          subject_full_name: row.subject_full_name ?? row.subjectFullName ?? '',
+          semester: row.semester ? Number(row.semester) : undefined,
+          spec_id: row.spec_id ? Number(row.spec_id) : undefined,
+          sub_subject_codes: row.sub_subject_codes ?? row.subSubjectCodes ?? '',
+        }),
+      })
+    }
+    setNotice('Subjects CSV imported successfully.')
+    await loadData()
+  }
+
+  async function importFacultyCsv(records: Record<string, string>[]) {
+    for (const row of records) {
+      const pan = String(row.PAN ?? row.pan ?? '').trim()
+      if (!pan) continue
+      await request('/api/faculty', {
+        method: 'POST',
+        body: JSON.stringify({
+          PAN: pan,
+          Title: row.Title ?? '',
+          faculty_name: row.faculty_name ?? row.facultyName ?? '',
+          inst_short_name: row.inst_short_name ?? row.instShortName ?? session?.institute ?? '',
+          faculty_desig: row.faculty_desig ?? row.facultyDesig ?? '',
+          faculty_total_exp: row.faculty_total_exp ? Number(row.faculty_total_exp) : 0,
+          faculty_address: row.faculty_address ?? row.address ?? '',
+          faculty_Email: row.faculty_Email ?? row.email ?? '',
+          faculty_MobileNo: row.faculty_MobileNo ?? row.mobile ?? '',
+          entered_by: row.entered_by ?? '',
+          entered_on: row.entered_on ?? '',
+        }),
+      })
+    }
+    setNotice('Faculty CSV imported successfully.')
+    await loadData()
+  }
+
   async function readCsvFileAndImport(file: File, importer: (records: Record<string, string>[]) => Promise<void>) {
     const text = await file.text()
     const records = parseCsvRecords(text)
     if (records.length === 0) throw new Error('No CSV rows were found to import.')
    
-   
-
-    
     await importer(records)
   }
 
@@ -1331,6 +1481,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
           </div>
           <button className="ml-auto lg:hidden text-sidebar-foreground" onClick={() => setSidebarOpen(false)}><X /></button>
         </div>
+
         <nav className="flex flex-1 flex-col gap-1 p-4">
           {navFor[session.role].map(item => (
             <button key={item} onClick={() => { setActive(item); setSidebarOpen(false) }} className={`rounded-lg px-3 py-2.5 text-left text-sm ${active === item ? 'bg-sidebar-primary font-medium text-sidebar-primary-foreground' : 'text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground'}`}>
@@ -1338,6 +1489,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
             </button>
           ))}
         </nav>
+
         <div className="border-t border-sidebar-border p-4 space-y-2">
           {isCollegeAdmin && (
             <button onClick={() => setShowPasswordChange(true)} className="flex w-full items-center gap-3 rounded-lg p-2 text-sm text-sidebar-foreground hover:bg-sidebar-accent/70 hover:text-sidebar-accent-foreground">
@@ -1368,7 +1520,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
           <ErrorAlert msg={error} />
           <SuccessAlert msg={notice} />
 
-          {/* Prominent role-aware global/college search */}
           <div className="mb-6">
             <div className="flex gap-2">
               <input
@@ -1379,7 +1530,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                 className="flex-1 rounded border border-input bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground"
               />
               <Button onClick={() => doSearch()} disabled={searching}>{searching ? 'Searching...' : 'Search'}</Button>
-              <Button variant="outline" onClick={() => { setQuery(''); setSearchResults(null); }}>{'Clear'}</Button>
+              <Button variant="outline" onClick={() => { setQuery(''); setSearchResults(null) }}>{'Clear'}</Button>
             </div>
 
             {searchResults && (
@@ -1387,7 +1538,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                 <div className="rounded-lg border bg-card p-4">
                   <h3 className="font-semibold">Institutes</h3>
                   <div className="mt-2 space-y-2">
-                    {(searchResults.institutes ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No institutes found.</div> : (searchResults.institutes ?? []).map((i: any) => <div key={i.inst_short_name} className="p-2 rounded hover:bg-muted" onClick={() => openInstituteDetails(i.inst_short_name)}>{i.inst_short_name} — {i.inst_full_name}</div>)}
+                    {(searchResults.institutes ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No institutes found.</div> : (searchResults.institutes ?? []).map((i: any) => <div key={i.inst_short_name} className="p-2 rounded hover:bg-muted cursor-pointer" onClick={() => openInstituteDetails(i.inst_short_name)}>{i.inst_short_name} — {i.inst_full_name}</div>)}
                   </div>
                 </div>
                 <div className="space-y-4">
@@ -1408,172 +1559,142 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
             )}
           </div>
 
-          {isFaculty ? (
-            <>
-              {active === 'Dashboard' && (
-                <div className="space-y-4">
-                  <div className="rounded-lg border bg-card p-6">
-                    <h2 className="text-2xl font-bold text-foreground">College User</h2>
-                    <p className="mt-1 text-sm text-muted-foreground">Institute: {session.institute || 'Not assigned'}</p>
-                  </div>
-                  <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-                    <Stat label="Total Faculty" value={facultyDashboard.totalFaculty} icon={Users} />
-                    <Stat label="Total Subjects" value={facultyDashboard.totalSubjects} icon={BookOpen} />
-                    <Stat label="Total Faculty-Subject Mappings" value={facultyDashboard.totalFacultySubjectMappings} icon={ClipboardList} />
-                    <Stat label="Total Faculty-Specialization Mappings" value={facultyDashboard.totalFacultySpecializationMappings} icon={ShieldCheck} />
-                  </div>
-                  <div className="rounded-lg border bg-card p-4">
-                    <h3 className="mb-4 text-lg font-semibold">Quick Actions</h3>
-                    <div className="flex flex-wrap gap-2">
-                      <Button onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}><Plus className="size-4" /> Add Faculty</Button>
-                      <Button variant="outline" onClick={() => setActive('Faculty')}>Manage Faculty</Button>
-                      <Button variant="outline" onClick={() => setActive('Courses')}>Faculty Subject Mapping</Button>
-                      <Button variant="outline" onClick={() => setActive('Subjects')}>Faculty Specialization Mapping</Button>
-                    </div>
-                  </div>
+          {isFaculty && active === 'Dashboard' && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-card p-6">
+                <h2 className="text-2xl font-bold text-foreground">College User</h2>
+                <p className="mt-1 text-sm text-muted-foreground">Institute: {session.institute || 'Not assigned'}</p>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <Stat label="Total Faculty" value={facultyDashboard.totalFaculty} icon={Users} />
+                <Stat label="Total Subjects" value={facultyDashboard.totalSubjects} icon={BookOpen} />
+                <Stat label="Total Faculty-Subject Mappings" value={facultyDashboard.totalFacultySubjectMappings} icon={ClipboardList} />
+                <Stat label="Total Faculty-Specialization Mappings" value={facultyDashboard.totalFacultySpecializationMappings} icon={ShieldCheck} />
+              </div>
+              <div className="rounded-lg border bg-card p-4">
+                <h3 className="mb-4 text-lg font-semibold">Quick Actions</h3>
+                <div className="flex flex-wrap gap-2">
+                  <Button onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}><Plus className="size-4" /> Add Faculty</Button>
+                  <Button variant="outline" onClick={() => setActive('Faculty')}>Manage Faculty</Button>
+                  <Button variant="outline" onClick={() => setActive('Courses')}>Faculty Subject Mapping</Button>
+                  <Button variant="outline" onClick={() => setActive('Specializations')}>Faculty Specialization Mapping</Button>
                 </div>
-              )}
+              </div>
+            </div>
+          )}
 
-              {active === 'Faculty' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-2xl font-semibold">Faculty Management</h2>
-                      <p className="text-sm text-muted-foreground">Institute: {session.institute || 'Not assigned'}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => window.alert('CSV Upload coming soon')}>CSV Upload</Button>
-                      <Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'Title', 'faculty_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo', 'inst_short_name'], visibleFaculty)}>CSV Export</Button>
-                      <Button size="sm" onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}><Plus className="size-4" /> Add Faculty</Button>
-                    </div>
-                  </div>
-
-                  <div className="mb-4 flex gap-2">
-                    <input value={facultySearch} onChange={e => setFacultySearch(e.target.value)} placeholder="Search faculty by PAN, name, designation, email..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                  </div>
-
-                  {visibleFaculty.length === 0 ? (
-                    <div className="rounded border border-dashed p-8 text-center">
-                      <p className="text-lg font-medium">No faculty records found.</p>
-                      <div className="mt-4 flex justify-center">
-                        <Button size="sm" onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}>
-                          <Plus className="size-4" /> Add Faculty
-                        </Button>
+          {isFaculty && active === 'Faculty' && (
+            <div className="rounded-lg border bg-card p-4 text-foreground">
+              <div className="mb-4 flex items-center justify-between gap-2">
+                <div>
+                  <h2 className="text-2xl font-semibold">Faculty Management</h2>
+                  <p className="text-sm text-muted-foreground">Institute: {session.institute || 'Not assigned'}</p>
+                </div>
+                <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'Title', 'faculty_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo', 'inst_short_name'], visibleFaculty)}>CSV Export</Button>
+                  <Button size="sm" onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}><Plus className="size-4" /> Add Faculty</Button>
+                </div>
+              </div>
+              <div className="mb-4 flex gap-2">
+                <input value={facultySearch} onChange={e => setFacultySearch(e.target.value)} placeholder="Search faculty by PAN, name, designation, email..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+              </div>
+              {visibleFaculty.length === 0 ? (
+                <div className="rounded border border-dashed p-8 text-center"><p className="text-lg font-medium">No faculty records found.</p></div>
+              ) : (
+                <div className="space-y-2">
+                  {visibleFaculty.map(item => (
+                    <div key={item.PAN} className="flex items-center justify-between rounded border p-3">
+                      <div>
+                        <div className="font-medium">{item.faculty_name || item.PAN}</div>
+                        <div className="text-sm text-muted-foreground">{item.PAN} • {item.faculty_desig || 'Designation'} • {item.inst_short_name}</div>
+                        <div className="text-xs text-muted-foreground">{item.faculty_Email || 'No email'} • {item.faculty_MobileNo || 'No mobile'}</div>
+                      </div>
+                      <div className="flex gap-2">
+                        <Button size="sm" variant="outline" onClick={() => setSelected(item)}>View</Button>
+                        <Button size="sm" variant="outline" onClick={() => setEditing(item)}>Edit</Button>
+                        <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteFaculty(item.PAN)}>Delete</Button>
                       </div>
                     </div>
-                  ) : (
-                    <div className="space-y-2">
-                      {visibleFaculty.map(item => (
-                        <div key={item.PAN} className="flex items-center justify-between rounded border p-3">
-                          <div>
-                            <div className="font-medium">{item.faculty_name || item.PAN}</div>
-                            <div className="text-sm text-muted-foreground">{item.PAN} • {item.faculty_desig || 'Designation'} • {item.inst_short_name}</div>
-                            <div className="text-xs text-muted-foreground">{item.faculty_Email || 'No email'} • {item.faculty_MobileNo || 'No mobile'}</div>
-                          </div>
-                          <div className="flex gap-2">
-                            <Button size="sm" variant="outline" onClick={() => setSelected(item)}>View</Button>
-                            <Button size="sm" variant="outline" onClick={() => setEditing(item)}>Edit</Button>
-                            <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteFaculty(item.PAN)}>Delete</Button>
-                          </div>
-                        </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {isFaculty && active === 'Courses' && (
+            <div className="rounded-lg border bg-card p-4 text-foreground">
+              <div className="mb-4 flex gap-2">
+                <input value={courseSearch} onChange={e => setCourseSearch(e.target.value)} placeholder="Search courses..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                <Button variant="outline" size="sm" onClick={() => downloadCsv('courses.csv', ['course_code', 'course_short_name', 'course_full_name'], visibleCourses)}>CSV</Button>
+                <input id="upload-courses-fac" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCoursesCsv)} className="hidden" />
+                <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-courses-fac')?.click()}>Upload</Button>
+                <Button size="sm" onClick={() => setEditingCourse({ course_code: '', course_short_name: '', course_full_name: '' })}>Add</Button>
+              </div>
+              <div className="space-y-2">
+                {visibleCourses.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleCourses.map(item => (
+                  <div key={item.course_code} className="flex items-center justify-between rounded border p-3">
+                    <div><div className="font-medium font-mono">{item.course_code}</div><div className="text-sm text-muted-foreground">{item.course_full_name || item.course_short_name}</div></div>
+                    <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditingCourse(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCourse(item.course_code)}>Delete</Button></div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {isFaculty && active === 'Credentials' && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-card p-4 text-foreground">
+                <h2 className="text-2xl font-semibold">Create Credentials</h2>
+                <p className="text-sm text-muted-foreground">Generate login accounts for college admins and faculty members.</p>
+                <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                  <div className="space-y-3 rounded border p-4">
+                    <h3 className="font-semibold">College Admin Credential</h3>
+                    <select value={caCredential.user_name} onChange={e => setCaCredential(prev => ({ ...prev, user_name: e.target.value }))} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                      <option value="">Select institute</option>
+                      {availableInstitutesForCredential.map(item => (
+                        <option key={item.inst_short_name} value={item.inst_short_name}>{item.inst_short_name} — {item.inst_full_name || 'Institute'}</option>
                       ))}
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {active === 'Courses' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-xl font-semibold">Faculty Subject Mapping</h2>
-                      <p className="text-sm text-muted-foreground">Select a faculty and assign subjects for {session.institute}</p>
-                    </div>
-                  </div>
-                  <div className="mb-4">
-                    <label className="text-sm font-medium text-foreground">Faculty</label>
-                    <select value={assignmentTargetPan} onChange={e => setAssignmentTargetPan(e.target.value)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                      <option value="">Select faculty</option>
-                      {ownInstituteFaculty.map(facultyItem => <option key={facultyItem.PAN} value={facultyItem.PAN}>{facultyItem.faculty_name || facultyItem.PAN} ({facultyItem.PAN})</option>)}
                     </select>
+                    <input value={caCredential.password} onChange={e => setCaCredential(prev => ({ ...prev, password: e.target.value }))} type="password" placeholder="Password" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                    <Button onClick={() => saveCredential('CA', caCredential)}>Create College Admin Credential</Button>
                   </div>
-                  {!assignmentTargetPan ? (
-                    <p className="text-sm text-muted-foreground">Select a faculty to manage subjects.</p>
-                  ) : (
-                    <>
-                      <div className="mb-4 rounded border p-4">
-                        <div className="mb-2 font-medium">Currently Assigned Subjects</div>
-                        <div className="space-y-2">
-                          {selectedFacultyAssignments.length === 0 ? <p className="text-sm text-muted-foreground">No subjects assigned.</p> : selectedFacultyAssignments.map(item => {
-                            const subject = subjects.find(s => s.subject_code === item.subject_code)
-                            const courseMap = courseSubjectMappings.find(mapping => mapping.subject_code === item.subject_code)
-                            return <div key={`${item.PAN}-${item.subject_code}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{item.subject_code}</div><div className="text-sm text-muted-foreground">{subject?.subject_full_name || subject?.subject_short_name || 'Subject record'}</div><div className="text-xs text-muted-foreground">Course: {courseMap?.course_code || '-'} • Study Year: {courseMap?.study_year ?? '-'} • Semester: {courseMap?.semester ?? '-'}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => removeFacultySubject(item.subject_code)}>Remove</Button></div>
-                          })}
-                        </div>
-                      </div>
-                      <div className="rounded border border-dashed p-4">
-                        <div className="mb-2 font-medium">+ Add Subject</div>
-                        <div className="flex gap-2">
-                          <select id="faculty-subject-select" className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                            <option value="">Select subject</option>
-                            {subjects.filter(subject => !selectedFacultyAssignments.some(item => item.subject_code === subject.subject_code)).map(subject => (
-                              <option key={subject.subject_code} value={subject.subject_code}>{subject.subject_code} — {subject.subject_full_name || subject.subject_short_name}</option>
-                            ))}
-                          </select>
-                          <Button type="button" onClick={() => { const subjectCode = (document.getElementById('faculty-subject-select') as HTMLSelectElement | null)?.value; if (!subjectCode) return; request('/api/faculty-subjects', { method:'POST', body: JSON.stringify({ PAN: assignmentTargetPan, subject_code: subjectCode })}).then(()=>loadData()).catch(err => setError(err instanceof Error ? err.message : 'Unable to add subject')) }}>Add</Button>
-                        </div>
-                      </div>
-                    </>
-                  )}
-                </div>
-              )}
 
-              {active === 'Subjects' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-xl font-semibold">Faculty Specialization Mapping</h2>
-                      <p className="text-sm text-muted-foreground">Select a faculty and assign specializations for {session.institute}</p>
-                    </div>
-                  </div>
-                  <div className="mb-4">
-                    <label className="text-sm font-medium text-foreground">Faculty</label>
-                    <select value={assignmentTargetPan} onChange={e => setAssignmentTargetPan(e.target.value)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                      <option value="">Select faculty</option>
-                      {ownInstituteFaculty.map(facultyItem => <option key={facultyItem.PAN} value={facultyItem.PAN}>{facultyItem.faculty_name || facultyItem.PAN} ({facultyItem.PAN})</option>)}
+                  <div className="space-y-3 rounded border p-4">
+                    <h3 className="font-semibold">Faculty Credential</h3>
+                    <select value={facCredential.user_name} onChange={e => setFacCredential(prev => ({ ...prev, user_name: e.target.value }))} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                      <option value="">Select faculty PAN</option>
+                      {availableFacultyForCredential.map(f => (
+                        <option key={f.PAN} value={f.PAN}>{f.faculty_name || f.PAN} — {f.PAN}</option>
+                      ))}
                     </select>
+                    <input value={facCredential.password} onChange={e => setFacCredential(prev => ({ ...prev, password: e.target.value }))} type="password" placeholder="Password" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                    <Button onClick={() => saveCredential('FAC', facCredential)}>Create Faculty Credential</Button>
                   </div>
-                  {!assignmentTargetPan ? (
-                    <p className="text-sm text-muted-foreground">Select a faculty to manage specializations.</p>
-                  ) : (
-                    <>
-                      <div className="mb-4 rounded border p-4">
-                        <div className="mb-2 font-medium">Current Specializations</div>
-                        <div className="space-y-2">
-                          {selectedFacultySpecializations.length === 0 ? <p className="text-sm text-muted-foreground">No specializations assigned.</p> : selectedFacultySpecializations.map(item => {
-                            const spec = specializations.find(s => s.spec_id === item.spec_id)
-                            return <div key={`${item.PAN}-${item.spec_id}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{spec?.spec_name || `Spec ${item.spec_id}`}</div><div className="text-sm text-muted-foreground">Spec ID: {item.spec_id}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => removeFacultySpec(item.spec_id)}>Remove</Button></div>
-                          })}
-                        </div>
-                      </div>
-                      <div className="rounded border border-dashed p-4">
-                        <div className="mb-2 font-medium">+ Add Specialization</div>
-                        <div className="flex gap-2">
-                          <select id="faculty-spec-select" className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                            <option value="">Select specialization</option>
-                            {specializations.filter(spec => !selectedFacultySpecializations.some(item => item.spec_id === spec.spec_id)).map(spec => (
-                              <option key={spec.spec_id} value={String(spec.spec_id)}>{spec.spec_name || `Spec ${spec.spec_id}`}</option>
-                            ))}
-                          </select>
-                          <Button type="button" onClick={() => { const specId = (document.getElementById('faculty-spec-select') as HTMLSelectElement | null)?.value; if (!specId) return; request('/api/faculty-specializations', { method:'POST', body: JSON.stringify({ PAN: assignmentTargetPan, spec_id: Number(specId) })}).then(()=>loadData()).catch(err => setError(err instanceof Error ? err.message : 'Unable to add specialization')) }}>Add</Button>
-                        </div>
-                      </div>
-                    </>
-                  )}
                 </div>
-              )}
-            </>
-          ) : (
+              </div>
+
+              <div className="rounded-lg border bg-card p-4 text-foreground">
+                <div className="mb-4 flex items-center justify-between gap-2">
+                  <h3 className="text-lg font-semibold">Existing Credentials</h3>
+                  <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                    <option value="ALL">All</option>
+                    <option value="CA">College Admin</option>
+                    <option value="FAC">Faculty</option>
+                  </select>
+                </div>
+                <div className="space-y-2">
+                  {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No credentials created yet.</p> : visibleUsers.map(item => (
+                    <div key={`${item.user_name}-${item.role}`} className="flex items-center justify-between rounded border p-3">
+                      <div><div className="font-medium">{item.user_name}</div><div className="text-sm text-muted-foreground">{item.role === 'CA' ? 'College Admin' : 'Faculty'} role</div></div>
+                      <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(item.user_name, item.role)}>Revoke</Button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!isFaculty && (
             <>
               {active === 'Overview' && (
                 <div className="grid gap-4 sm:grid-cols-4">
@@ -1590,69 +1711,17 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     <div className="flex items-start justify-between mb-4">
                       <div>
                         <h2 className="text-2xl font-bold text-blue-900">{session.institute}</h2>
-                        <p className="text-sm text-gray-600 mt-1">
-                          {institutes.find(item => item.inst_short_name === session.institute)?.inst_full_name || 'College Administration Profile'}
-                        </p>
+                        <p className="text-sm text-gray-600 mt-1">{institutes.find(item => item.inst_short_name === session.institute)?.inst_full_name || 'College Administration Profile'}</p>
                       </div>
-                      <Button onClick={() => setShowInstituteProfileForm(true)} className="bg-blue-600 hover:bg-blue-700">
-                        Edit Profile
-                      </Button>
+                      <Button onClick={() => setShowInstituteProfileForm(true)} className="bg-blue-600 hover:bg-blue-700">Edit Profile</Button>
                     </div>
-
                     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                      <div className="rounded border p-4 bg-white">
-                        <div className="text-xs font-semibold text-gray-500 uppercase">Faculty Count</div>
-                        <div className="text-3xl font-bold text-blue-600 mt-2">{ownInstituteFaculty.length}</div>
-                      </div>
-                      <div className="rounded border p-4 bg-white">
-                        <div className="text-xs font-semibold text-gray-500 uppercase">Courses Offered</div>
-                        <div className="text-3xl font-bold text-purple-600 mt-2">{visibleInstCourseMappings.length}</div>
-                      </div>
-                      <div className="rounded border p-4 bg-white">
-                        <div className="text-xs font-semibold text-gray-500 uppercase">Subjects</div>
-                        <div className="text-3xl font-bold text-green-600 mt-2">{visibleCourseSubjectMappings.length}</div>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="rounded-lg border bg-card p-4">
-                    <h3 className="text-lg font-semibold mb-4">Course Allocation</h3>
-                    <div className="space-y-2">
-                      {visibleInstCourseMappings.length === 0 && (
-                        <p className="text-sm text-muted-foreground">No courses allocated yet.</p>
-                      )}
-                      {visibleInstCourseMappings.length > 0 && (
-                        <>
-                          {visibleInstCourseMappings.map(item => (
-                            <div key={`${item.inst_short_name}-${item.course_code}`} className="flex items-center justify-between rounded border p-3">
-                              <div>
-                                <div className="font-medium">{item.course_code}</div>
-                                <div className="text-sm text-muted-foreground">Intake: {item.intake ?? '-'} • Strength: {item.strength ?? '-'}</div>
-                              </div>
-                              <Button type="button" size="sm" variant="outline" className="text-red-600" onClick={() => deleteInstCourse(item.inst_short_name, item.course_code)}>Remove</Button>
-                            </div>
-                          ))}
-                        </>
-                      )}
+                      <div className="rounded border p-4 bg-white"><div className="text-xs font-semibold text-gray-500 uppercase">Faculty Count</div><div className="text-3xl font-bold text-blue-600 mt-2">{ownInstituteFaculty.length}</div></div>
+                      <div className="rounded border p-4 bg-white"><div className="text-xs font-semibold text-gray-500 uppercase">Courses Offered</div><div className="text-3xl font-bold text-purple-600 mt-2">{visibleInstCourseMappings.length}</div></div>
+                      <div className="rounded border p-4 bg-white"><div className="text-xs font-semibold text-gray-500 uppercase">Subjects</div><div className="text-3xl font-bold text-green-600 mt-2">{visibleCourseSubjectMappings.length}</div></div>
                     </div>
                   </div>
                 </div>
-              )}
-
-              {showInstituteProfileForm && (
-                <InstituteProfileForm
-                  institute={institutes.find(item => item.inst_short_name === session.institute)}
-                  isEditing={true}
-                  onSave={async (data) => {
-                    await saveInstitute({ 
-                      preventDefault: () => {}, 
-                      currentTarget: Object.fromEntries(Object.entries(data).map(([k, v]) => [k, { value: v }])),
-                      isCreate: false,
-                    } as any)
-                    setShowInstituteProfileForm(false)
-                  }}
-                  onCancel={() => setShowInstituteProfileForm(false)}
-                />
               )}
 
               {active === 'Institutes' && isCentralExaminer && (
@@ -1664,219 +1733,216 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-institutes')?.click()}>Upload</Button>
                     <Button size="sm" onClick={() => { setEditingInst(null); setShowInstituteFormForCE(true) }}>Add</Button>
                   </div>
-                  <div className="space-y-2">{visibleInstitutes.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleInstitutes.map(item => <div key={item.inst_short_name} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{item.inst_short_name}</div><div className="text-sm text-muted-foreground">{item.inst_full_name}</div></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => { setEditingInst(item); setShowInstituteFormForCE(true) }}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteInstitute(item.inst_short_name)}>Delete</Button></div></div>)}</div>
+                  <div className="space-y-2">
+                    {visibleInstitutes.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleInstitutes.map(item => (
+                      <div key={item.inst_short_name} className="flex items-center justify-between rounded border p-3">
+                        <div><div className="font-medium">{item.inst_short_name}</div><div className="text-sm text-muted-foreground">{item.inst_full_name}</div></div>
+                        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => { setEditingInst(item); setShowInstituteFormForCE(true) }}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteInstitute(item.inst_short_name)}>Delete</Button></div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
-              )}
-
-              {showInstituteFormForCE && (
-                <InstituteProfileForm
-                  institute={editingInst ?? undefined}
-                  isEditing={!!editingInst?.inst_short_name}
-                  onSave={async (data) => {
-                    await saveInstitute({ 
-                      preventDefault: () => {}, 
-                      currentTarget: data,
-                      isCreate: !editingInst?.inst_short_name,
-                    } as any)
-                    setShowInstituteFormForCE(false)
-                  }}
-                  onCancel={() => {
-                    setShowInstituteFormForCE(false)
-                    setEditingInst(null)
-                  }}
-                />
               )}
 
               {active === 'Courses' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={courseSearch} onChange={e => setCourseSearch(e.target.value)} placeholder="Search courses..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('courses.csv', ['course_code', 'course_short_name', 'course_full_name'], visibleCourses)}>CSV</Button>
-                    <input id="upload-courses" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCoursesCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-courses')?.click()}>Upload</Button>
-                    <Button size="sm" onClick={() => setEditingCourse({ course_code: '', course_short_name: '', course_full_name: '' })}>Add</Button>
-                  </div>
-                  <div className="space-y-2">{visibleCourses.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleCourses.map(item => <div key={item.course_code} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium font-mono">{item.course_code}</div><div className="text-sm text-muted-foreground">{item.course_full_name || item.course_short_name}</div></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditingCourse(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCourse(item.course_code)}>Delete</Button></div></div>)}</div>
-                </div>
-              )}
-
-              {/* Course-Subject mappings management (CE and CA) */}
-              {active === 'Courses' && (isCentralExaminer || session?.role === 'CA') && (
-                <div className="rounded-lg border bg-card p-4 text-foreground mt-4">
-                  <h3 className="text-lg font-semibold mb-4">Course - Subject Mappings</h3>
-                  <div className="mb-3 flex gap-2">
-                    <input value={courseSubjectSearch} onChange={e => setCourseSubjectSearch(e.target.value)} placeholder="Search mappings..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('course-subjects.csv', ['course_code', 'subject_code', 'study_year', 'semester'], visibleCourseSubjectMappings)}>CSV</Button>
-                    <input id="upload-course-subjects" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCourseSubjectsCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-course-subjects')?.click()}>Upload</Button>
-                    <Button size="sm" onClick={openAddMapping}>Add</Button>
+                <div className="space-y-4">
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <div className="mb-4 flex gap-2">
+                      <input value={courseSearch} onChange={e => setCourseSearch(e.target.value)} placeholder="Search courses..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                      <Button variant="outline" size="sm" onClick={() => downloadCsv('courses.csv', ['course_code', 'course_short_name', 'course_full_name'], visibleCourses)}>CSV</Button>
+                      <input id="upload-courses-ce" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCoursesCsv)} className="hidden" />
+                      <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-courses-ce')?.click()}>Upload</Button>
+                      <Button size="sm" onClick={() => setEditingCourse({ course_code: '', course_short_name: '', course_full_name: '' })}>Add</Button>
+                    </div>
+                    <div className="space-y-2">
+                      {visibleCourses.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleCourses.map(item => (
+                        <div key={item.course_code} className="flex items-center justify-between rounded border p-3">
+                          <div><div className="font-medium font-mono">{item.course_code}</div><div className="text-sm text-muted-foreground">{item.course_full_name || item.course_short_name}</div></div>
+                          <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditingCourse(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCourse(item.course_code)}>Delete</Button></div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
 
-                  <div className="space-y-2">{visibleCourseSubjectMappings.length === 0 ? <p className="text-sm text-muted-foreground">No mappings found.</p> : visibleCourseSubjectMappings.map(mapping => {
-                    const courseObj = courses.find(c => c.course_code === mapping.course_code)
-                    const subjectObj = subjects.find(s => s.subject_code === mapping.subject_code)
-                    return (
-                      <div key={`${mapping.course_code}-${mapping.subject_code}`} className="flex items-center justify-between rounded border p-3">
+                  {(isCentralExaminer || isCollegeAdmin) && (
+                    <div className="rounded-lg border bg-card p-4 text-foreground">
+                      <div className="mb-4 flex items-center justify-between gap-2">
                         <div>
-                          <div className="font-medium">{mapping.course_code} → {mapping.subject_code}</div>
-                          <div className="text-sm text-muted-foreground">{courseObj?.course_full_name || courseObj?.course_short_name} • {subjectObj?.subject_full_name || subjectObj?.subject_short_name}</div>
-                          <div className="text-sm text-muted-foreground">Year: {mapping.study_year ?? 'Not Set'} • Sem: {mapping.semester ?? 'Not Set'}</div>
+                          <h3 className="text-lg font-semibold">Course - Subject Mappings</h3>
+                          <p className="text-sm text-muted-foreground">Keep year, semester and college association together in the same mapping.</p>
                         </div>
-                        <div className="flex gap-2">
-                          <Button size="sm" variant="outline" onClick={() => openViewMapping(mapping)}>View</Button>
-                          <Button size="sm" variant="outline" onClick={() => openEditMapping(mapping)}>Edit</Button>
-                          <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCourseSubject(mapping.course_code, mapping.subject_code)}>Delete</Button>
-                        </div>
+                        <Button size="sm" onClick={() => openAddMapping()}>Add</Button>
                       </div>
-                    )
-                  })}</div>
+                      <div className="space-y-2">
+                        {visibleCourseSubjectMappings.length === 0 ? <p className="text-sm text-muted-foreground">No course-subject mappings found.</p> : visibleCourseSubjectMappings.map(item => (
+                          <div key={`${item.course_code}-${item.subject_code}`} className="flex items-center justify-between gap-3 rounded border p-3">
+                            <div><div className="font-medium">{item.course_code} → {item.subject_code}</div><div className="text-sm text-muted-foreground">Year: {item.study_year ?? '-'} • Semester: {item.semester ?? '-'} • Colleges: {Array.isArray(item.inst_short_names) && item.inst_short_names.length > 0 ? item.inst_short_names.join(', ') : '—'}</div></div>
+                            <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => openViewMapping(item)}>View</Button><Button size="sm" variant="outline" onClick={() => openEditMapping(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCourseSubject(item.course_code, item.subject_code)}>Delete</Button></div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {active === 'Specializations' && isCentralExaminer && (
+              {(active === 'Faculty' || active === 'Users') && (isCentralExaminer || isCollegeAdmin) && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={specializationSearch} onChange={e => setSpecializationSearch(e.target.value)} placeholder="Search specializations..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('specializations.csv', ['spec_id', 'spec_name'], visibleSpecializations)}>CSV</Button>
-                    <input id="upload-specializations" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importSpecializationsCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-specializations')?.click()}>Upload</Button>
-                    <Button size="sm" onClick={() => setEditingSpec({ spec_id: 0, spec_name: '' })}>Add</Button>
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-2xl font-semibold">{active === 'Users' ? 'Users' : 'Faculty Management'}</h2>
+                      <p className="text-sm text-muted-foreground">Institute: {session.institute || 'All'}</p>
+                    </div>
+                    {active !== 'Users' && (
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'Title', 'faculty_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo', 'inst_short_name'], visibleFaculty)}>CSV Export</Button>
+                        <Button size="sm" onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}>Add</Button>
+                      </div>
+                    )}
                   </div>
-                  <div className="space-y-2">{visibleSpecializations.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleSpecializations.map(item => <div key={item.spec_id} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{item.spec_name || `Spec ${item.spec_id}`}</div><div className="text-sm text-muted-foreground">ID: {item.spec_id}</div></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditingSpec(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSpecialization(item.spec_id)}>Delete</Button></div></div>)}</div>
+
+                  {active === 'Users' ? (
+                    <>
+                      <div className="mb-4 flex gap-2">
+                        <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search users..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                        <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                          <option value="ALL">All</option>
+                          <option value="CA">College Admin</option>
+                          <option value="FAC">Faculty</option>
+                        </select>
+                      </div>
+                      <div className="space-y-2">
+                        {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No users found.</p> : visibleUsers.map(item => (
+                          <div key={`${item.user_name}-${item.role}`} className="flex items-center justify-between rounded border p-3">
+                            <div><div className="font-medium">{item.user_name}</div><div className="text-sm text-muted-foreground">{item.role === 'CA' ? 'College Admin' : 'Faculty'} • {item.role === 'CA' ? 'Institute Login' : 'Faculty Login'}</div></div>
+                            <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setUserSearch(item.user_name)}>Search</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(item.user_name, item.role)}>Revoke</Button></div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="mb-4 flex gap-2">
+                        <input value={facultySearch} onChange={e => setFacultySearch(e.target.value)} placeholder="Search faculty..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                      </div>
+                      <div className="space-y-2">
+                        {visibleFaculty.length === 0 ? <p className="text-sm text-muted-foreground">No faculty records found.</p> : visibleFaculty.map(item => (
+                          <div key={item.PAN} className="flex items-center justify-between rounded border p-3">
+                            <div><div className="font-medium">{item.faculty_name || item.PAN}</div><div className="text-sm text-muted-foreground">{item.PAN} • {item.faculty_desig || 'Designation'} • {item.inst_short_name}</div></div>
+                            <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setSelected(item)}>View</Button><Button size="sm" variant="outline" onClick={() => setEditing(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteFaculty(item.PAN)}>Delete</Button></div>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </div>
+              )}
+
+              {active === 'Specializations' && (
+                <div className="rounded-lg border bg-card p-4 text-foreground">
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-2xl font-semibold">Specializations</h2>
+                      <p className="text-sm text-muted-foreground">Institute: {session.institute || 'All'}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => downloadCsv('specializations.csv', ['spec_id', 'spec_name'], visibleSpecializations)}>Download CSV</Button>
+                      <input id="upload-specializations-ce" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importSpecializationsCsv)} className="hidden" />
+                      <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-specializations-ce')?.click()}>Upload CSV</Button>
+                      <Button size="sm" onClick={() => setEditingSpec({ spec_id: 0, spec_name: '' })}>Add</Button>
+                    </div>
+                  </div>
+                  <div className="mb-4 flex gap-2">
+                    <input value={specializationSearch} onChange={e => setSpecializationSearch(e.target.value)} placeholder="Search specialization..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                  </div>
+                  <div className="space-y-2">
+                    {visibleSpecializations.length === 0 ? <p className="text-sm text-muted-foreground">No specialization records found.</p> : visibleSpecializations.map(item => (
+                      <div key={item.spec_id} className="flex items-center justify-between rounded border p-3">
+                        <div><div className="font-medium">{item.spec_name || `Spec ${item.spec_id}`}</div><div className="text-sm text-muted-foreground">Spec ID: {item.spec_id}</div></div>
+                        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setSelectedSpec(item)}>View</Button><Button size="sm" variant="outline" onClick={() => setEditingSpec(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSpecialization(item.spec_id)}>Delete</Button></div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
               {active === 'Subjects' && (
                 <div className="rounded-lg border bg-card p-4 text-foreground">
+                  <div className="mb-4 flex items-center justify-between gap-2">
+                    <div>
+                      <h2 className="text-2xl font-semibold">Subjects</h2>
+                      <p className="text-sm text-muted-foreground">Institute: {session.institute || 'All'}</p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" onClick={() => downloadCsv('subjects.csv', ['subject_code', 'subject_short_name', 'subject_full_name', 'semester', 'spec_id', 'sub_subject_codes'], visibleSubjects)}>Download CSV</Button>
+                      <input id="upload-subjects-ce" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importSubjectsCsv)} className="hidden" />
+                      <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-subjects-ce')?.click()}>Upload CSV</Button>
+                      <Button size="sm" onClick={() => setEditingSubject({ subject_code: '', subject_short_name: '', subject_full_name: '', semester: undefined, spec_id: undefined, sub_subject_codes: '' })}>Add</Button>
+                    </div>
+                  </div>
                   <div className="mb-4 flex gap-2">
                     <input value={subjectSearch} onChange={e => setSubjectSearch(e.target.value)} placeholder="Search subjects..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('subjects.csv', ['subject_code', 'subject_short_name', 'subject_full_name', 'semester', 'spec_id'], visibleSubjects)}>CSV</Button>
-                    <input id="upload-subjects" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importSubjectsCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-subjects')?.click()}>Upload</Button>
-                    <Button size="sm" onClick={() => setEditingSubject({ subject_code: '', subject_short_name: '', subject_full_name: '', semester: undefined, spec_id: undefined, sub_subject_codes: '' })}>Add</Button>
                   </div>
-                  <div className="space-y-2">{visibleSubjects.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleSubjects.map(item => <div key={item.subject_code} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium font-mono">{item.subject_code}</div><div className="text-sm text-muted-foreground">{item.subject_full_name || item.subject_short_name}</div></div>{isCentralExaminer && <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setEditingSubject(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSubject(item.subject_code)}>Delete</Button></div>}</div>)}</div>
-                </div>
-              )}
-
-              {active === 'Faculty' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={facultySearch} onChange={e => setFacultySearch(e.target.value)} placeholder="Search faculty..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('faculty.csv', ['PAN', 'faculty_name', 'faculty_desig', 'inst_short_name'], visibleFaculty)}>CSV</Button>
-                    <input id="upload-faculty" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importFacultyCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-faculty')?.click()}>Upload</Button>
-                    <Button size="sm" onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}>Add</Button>
+                  <div className="space-y-2">
+                    {visibleSubjects.length === 0 ? <p className="text-sm text-muted-foreground">No subject records found.</p> : visibleSubjects.map(item => (
+                      <div key={item.subject_code} className="flex items-center justify-between rounded border p-3">
+                        <div><div className="font-medium">{item.subject_code}</div><div className="text-sm text-muted-foreground">{item.subject_full_name || item.subject_short_name || 'Subject'} • Semester: {item.semester ?? '-'} • Spec ID: {item.spec_id ?? '-'}</div></div>
+                        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setSelectedSubject(item)}>View</Button><Button size="sm" variant="outline" onClick={() => setEditingSubject(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSubject(item.subject_code)}>Delete</Button></div>
+                      </div>
+                    ))}
                   </div>
-                  <div className="space-y-2">{visibleFaculty.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleFaculty.map(item => <div key={item.PAN} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{item.faculty_name}</div><div className="text-sm text-muted-foreground">{item.PAN} • {item.inst_short_name}</div></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setSelected(item)}>View</Button><Button size="sm" variant="outline" onClick={() => setEditing(item)}>Edit</Button>{session?.role !== 'FAC' && <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteFaculty(item.PAN)}>Delete</Button>}</div></div>)}</div>
-                </div>
-              )}
-
-              {active === 'Users' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2"><input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search users..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" /><select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground"><option value="ALL">All</option><option value="CA">College Admin</option><option value="FAC">Faculty</option></select><Button variant="outline" size="sm" onClick={() => downloadCsv('users.csv', ['user_name', 'role'], visibleUsers)}>CSV</Button><input id="upload-users" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCredentialCsv)} className="hidden" /><Button variant="outline" size="sm" onClick={() => document.getElementById('upload-users')?.click()}>Upload</Button></div>
-                  <div className="space-y-2">{visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleUsers.map(user => <div key={`${user.role}-${user.user_name}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{user.user_name}</div><div className="text-sm text-muted-foreground">{user.role}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(user.user_name, user.role)}>Revoke</Button></div>)}</div>
                 </div>
               )}
 
               {active === 'Credentials' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex gap-2">
-                    <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search credentials..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                    <Button variant="outline" size="sm" onClick={() => downloadCsv('credentials.csv', ['user_name', 'role'], visibleUsers)}>CSV</Button>
-                    <input id="upload-credentials" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importCredentialCsv)} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-credentials')?.click()}>Upload</Button>
-                  </div>
-
-                  <div className="grid gap-4 lg:grid-cols-2">
-                    <div className="rounded border p-3">
-                      <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">College Admin credential</h3>
-                      <div className="space-y-3">
-                        <div>
-                          <label className="text-xs text-muted-foreground mb-1 block">Select or Enter Institute</label>
-                          <select value={caCredential.user_name} onChange={e => setCaCredential({ ...caCredential, user_name: e.target.value })} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                            <option value="">Choose institute or enter custom...</option>
-                            {availableInstitutesForCredential.map(inst => (
-                              <option key={inst.inst_short_name} value={inst.inst_short_name}>
-                                {inst.inst_short_name} - {inst.inst_full_name}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="mt-2">
-                            <input 
-                              type="text" 
-                              value={caCredential.user_name} 
-                              onChange={e => setCaCredential({ ...caCredential, user_name: e.target.value })} 
-                              placeholder="Or enter custom institute code" 
-                              className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" 
-                            />
-                            {visibleInstitutes.length === 0 && <p className="text-xs text-amber-600 mt-1">No institutes found. Enter code manually.</p>}
-                            {visibleInstitutes.length > 0 && availableInstitutesForCredential.length === 0 && <p className="text-xs text-amber-600 mt-1">All institutes already have credentials.</p>}
-                          </div>
-                        </div>
-                        <div>
-                          <input type="password" value={caCredential.password} onChange={e => setCaCredential({ ...caCredential, password: e.target.value })} placeholder="Password (min 8 characters)" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                          {caCredential.password && caCredential.password.length < 8 && <p className="text-xs text-red-500 mt-1">Password must be at least 8 characters</p>}
-                        </div>
-                        <Button type="button" onClick={() => saveCredential('CA', caCredential)} disabled={!caCredential.user_name || caCredential.password.length < 8}>Create credential</Button>
+                <div className="space-y-4">
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <h2 className="text-2xl font-semibold">Create Credentials</h2>
+                    <p className="text-sm text-muted-foreground">Generate login accounts for college admins and faculty members.</p>
+                    <div className="mt-4 grid gap-4 lg:grid-cols-2">
+                      <div className="space-y-3 rounded border p-4">
+                        <h3 className="font-semibold">College Admin Credential</h3>
+                        <select value={caCredential.user_name} onChange={e => setCaCredential(prev => ({ ...prev, user_name: e.target.value }))} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                          <option value="">Select institute</option>
+                          {availableInstitutesForCredential.map(item => (
+                            <option key={item.inst_short_name} value={item.inst_short_name}>{item.inst_short_name} — {item.inst_full_name || 'Institute'}</option>
+                          ))}
+                        </select>
+                        <input value={caCredential.password} onChange={e => setCaCredential(prev => ({ ...prev, password: e.target.value }))} type="password" placeholder="Password" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                        <Button onClick={() => saveCredential('CA', caCredential)}>Create College Admin Credential</Button>
                       </div>
-                    </div>
 
-                    <div className="rounded border p-3">
-                      <h3 className="mb-3 text-sm font-semibold uppercase tracking-wide text-muted-foreground">Faculty credential</h3>
-                      <div className="space-y-3">
-                        <div>
-                          <label className="text-xs text-muted-foreground mb-1 block">Select or Enter Faculty PAN</label>
-                          <select value={facCredential.user_name} onChange={e => setFacCredential({ ...facCredential, user_name: e.target.value })} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                            <option value="">Choose faculty or enter custom...</option>
-                            {availableFacultyForCredential.map(fac => (
-                              <option key={fac.PAN} value={fac.PAN}>
-                                {fac.PAN} - {fac.faculty_name}
-                              </option>
-                            ))}
-                          </select>
-                          <div className="mt-2">
-                            <input 
-                              type="text" 
-                              value={facCredential.user_name} 
-                              onChange={e => setFacCredential({ ...facCredential, user_name: e.target.value })} 
-                              placeholder="Or enter custom PAN / username" 
-                              className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" 
-                            />
-                            {visibleFaculty.length === 0 && <p className="text-xs text-amber-600 mt-1">No faculty found. Enter PAN manually.</p>}
-                            {visibleFaculty.length > 0 && availableFacultyForCredential.length === 0 && <p className="text-xs text-amber-600 mt-1">All faculty already have credentials.</p>}
-                          </div>
-                        </div>
-                        <div>
-                          <input type="password" value={facCredential.password} onChange={e => setFacCredential({ ...facCredential, password: e.target.value })} placeholder="Password (min 8 characters)" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                          {facCredential.password && facCredential.password.length < 8 && <p className="text-xs text-red-500 mt-1">Password must be at least 8 characters</p>}
-                        </div>
-                        <Button type="button" onClick={() => saveCredential('FAC', facCredential)} disabled={!facCredential.user_name || facCredential.password.length < 8}>Create credential</Button>
+                      <div className="space-y-3 rounded border p-4">
+                        <h3 className="font-semibold">Faculty Credential</h3>
+                        <select value={facCredential.user_name} onChange={e => setFacCredential(prev => ({ ...prev, user_name: e.target.value }))} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                          <option value="">Select faculty PAN</option>
+                          {availableFacultyForCredential.map(f => (
+                            <option key={f.PAN} value={f.PAN}>{f.faculty_name || f.PAN} — {f.PAN}</option>
+                          ))}
+                        </select>
+                        <input value={facCredential.password} onChange={e => setFacCredential(prev => ({ ...prev, password: e.target.value }))} type="password" placeholder="Password" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                        <Button onClick={() => saveCredential('FAC', facCredential)}>Create Faculty Credential</Button>
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-4 flex gap-2">
-                    <input id="upload-credentials-main" type="file" accept=".csv" onChange={async (event) => {
-                      const file = event.target.files?.[0]
-                      if (!file) return
-                      try {
-                        const text = await file.text()
-                        const records = parseCsvRecords(text)
-                        await importCredentialCsv(records)
-                      } catch (e) {
-                        setError(e instanceof Error ? e.message : 'Unable to import CSV')
-                      } finally {
-                        event.target.value = ''
-                      }
-                    }} className="hidden" />
-                    <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-credentials-main')?.click()}>
-                      Import Credentials CSV
-                    </Button>
-                  </div>
-
-                  <div className="mt-4 space-y-2">
-                    {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No results found.</p> : visibleUsers.map(user => <div key={`${user.role}-${user.user_name}`} className="flex items-center justify-between rounded border p-3"><div><div className="font-medium">{user.user_name}</div><div className="text-sm text-muted-foreground">{user.role}</div></div><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(user.user_name, user.role)}>Revoke</Button></div>) }
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <div className="mb-4 flex items-center justify-between gap-2">
+                      <h3 className="text-lg font-semibold">Existing Credentials</h3>
+                      <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                        <option value="ALL">All</option>
+                        <option value="CA">College Admin</option>
+                        <option value="FAC">Faculty</option>
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No credentials created yet.</p> : visibleUsers.map(item => (
+                        <div key={`${item.user_name}-${item.role}`} className="flex items-center justify-between rounded border p-3">
+                          <div><div className="font-medium">{item.user_name}</div><div className="text-sm text-muted-foreground">{item.role === 'CA' ? 'College Admin' : 'Faculty'} role</div></div>
+                          <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(item.user_name, item.role)}>Revoke</Button>
+                        </div>
+                      ))}
+                    </div>
                   </div>
                 </div>
               )}
@@ -1900,7 +1966,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
           userRole={session.role}
           onClose={() => {
             setShowPasswordChange(false)
-            // After password change, logout
             setTimeout(() => signOut(), 1500)
           }}
         />
@@ -1908,63 +1973,114 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
 
       {showMappingModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <form onSubmit={async (e) => {
-            e.preventDefault()
-            const fd = new FormData(e.currentTarget as HTMLFormElement)
-            const course_code = String(fd.get('course_code') ?? '').trim().toUpperCase()
-            const subject_code = String(fd.get('subject_code') ?? '').trim()
-            const study_year_raw = fd.get('study_year')
-            const semester_raw = fd.get('semester')
-            const study_year = study_year_raw === null || study_year_raw === '' ? undefined : Number(study_year_raw)
-            const semester = semester_raw === null || semester_raw === '' ? undefined : Number(semester_raw)
-            await saveCourseSubject({ course_code, subject_code, study_year: typeof study_year === 'number' ? study_year : null, semester: typeof semester === 'number' ? semester : null })
-          }} className="w-full max-w-md rounded-lg border bg-card p-6 shadow-lg">
-            <div className="mb-4 flex justify-between items-start">
-              <h2 className="text-lg font-semibold text-foreground">{editingMapping ? 'Edit' : 'Add'} Course - Subject Mapping</h2>
-              <button type="button" onClick={() => { setShowMappingModal(false); setEditingMapping(null) }} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
-            </div>
-            <div className="grid gap-3 mb-4">
+          <div className="w-full max-w-2xl rounded-lg border bg-card p-6 shadow-lg">
+            <form onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+              event.preventDefault()
+              const form = event.currentTarget
+              const formData = new FormData(form)
+              const courseCode = String(formData.get('course_code') ?? '')
+              const subjectCode = String(formData.get('subject_code') ?? '')
+              const studyYearRaw = formData.get('study_year')
+              const semesterRaw = formData.get('semester')
+              const instShortNames = Array.from(formData.getAll('inst_short_names')).map(value => String(value))
+              const studyYear = studyYearRaw === null || studyYearRaw === '' ? null : Number(studyYearRaw)
+              const semester = semesterRaw === null || semesterRaw === '' ? null : Number(semesterRaw)
+              await saveCourseSubject({ course_code: courseCode, subject_code: subjectCode, study_year: studyYear, semester, inst_short_names: instShortNames })
+            }}>
+              <div className="mb-4 flex justify-between items-start">
+                <h2 className="text-lg font-semibold text-foreground">{editingMapping ? 'Edit' : 'Add'} Course - Subject Mapping</h2>
+                <button type="button" onClick={() => { setShowMappingModal(false); setEditingMapping(null) }} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
                 <label className="block"><span className="text-sm font-medium text-foreground">Course</span>
                   <select name="course_code" defaultValue={editingMapping?.course_code ?? ''} required disabled={Boolean(editingMapping)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
                     <option value="">Select course</option>
-                    {(session?.role === 'CA' ? visibleCourses.filter(c => visibleInstCourseMappings.some(m => m.inst_short_name === session.institute && m.course_code === c.course_code)) : visibleCourses).map(c => <option key={c.course_code} value={c.course_code}>{c.course_code} — {c.course_full_name || c.course_short_name}</option>)}
+                    {courses.map(c => <option key={c.course_code} value={c.course_code}>{c.course_code} — {c.course_full_name || c.course_short_name}</option>)}
                   </select>
                   {editingMapping && <input type="hidden" name="course_code" value={editingMapping.course_code} />}
                 </label>
 
-              <label className="block"><span className="text-sm font-medium text-foreground">Subject</span>
-                <select name="subject_code" defaultValue={editingMapping?.subject_code ?? ''} required disabled={Boolean(editingMapping)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                  <option value="">Select subject</option>
-                  {subjects.map(s => <option key={s.subject_code} value={s.subject_code}>{s.subject_code} — {s.subject_full_name || s.subject_short_name}</option>)}
-                </select>
-                {editingMapping && <input type="hidden" name="subject_code" value={editingMapping.subject_code} />}
-              
-              </label>
+                <label className="block"><span className="text-sm font-medium text-foreground">Subject</span>
+                  <select name="subject_code" defaultValue={editingMapping?.subject_code ?? ''} required disabled={Boolean(editingMapping)} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                    <option value="">Select subject</option>
+                    {subjects.map(s => <option key={s.subject_code} value={s.subject_code}>{s.subject_code} — {s.subject_full_name || s.subject_short_name}</option>)}
+                  </select>
+                  {editingMapping && <input type="hidden" name="subject_code" value={editingMapping.subject_code} />}
+                </label>
 
-              <label className="block"><span className="text-sm font-medium text-foreground">Study Year</span>
-                <select name="study_year" defaultValue={editingMapping?.study_year ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                  <option value="">Not Set</option>
-                  <option value="1">1 (First Year)</option>
-                  <option value="2">2 (Second Year)</option>
-                  <option value="3">3 (Third Year)</option>
-                  <option value="4">4 (Fourth Year)</option>
-                </select>
-              </label>
+                <label className="block"><span className="text-sm font-medium text-foreground">Study Year</span>
+                  <select name="study_year" defaultValue={editingMapping?.study_year ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                    <option value="">Not Set</option>
+                    <option value="1">1 (First Year)</option>
+                    <option value="2">2 (Second Year)</option>
+                    <option value="3">3 (Third Year)</option>
+                    <option value="4">4 (Fourth Year)</option>
+                  </select>
+                </label>
 
-              <label className="block"><span className="text-sm font-medium text-foreground">Semester</span>
-                <select name="semester" defaultValue={editingMapping?.semester ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                  <option value="">Not Set</option>
-                  {[1,2,3,4,5,6,7,8].map(n => <option key={n} value={String(n)}>{n}</option>)}
-                </select>
-              </label>
-            </div>
-            <div className="flex gap-2 justify-end">
-              <Button type="button" variant="outline" onClick={() => { setShowMappingModal(false); setEditingMapping(null) }}>Cancel</Button>
-              <Button type="submit">Save</Button>
-            </div>
-          </form>
+                <label className="block"><span className="text-sm font-medium text-foreground">Semester</span>
+                  <select name="semester" defaultValue={editingMapping?.semester ?? ''} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                    <option value="">Not Set</option>
+                    {[1,2,3,4,5,6,7,8].map(n => <option key={n} value={String(n)}>{n}</option>)}
+                  </select>
+                </label>
+              </div>
+
+              <div className="mt-4">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="text-sm font-medium text-foreground">Associated College Details</span>
+                  <input
+                    type="search"
+                    value={mappingCollegeSearch}
+                    onChange={(event) => setMappingCollegeSearch(event.target.value)}
+                    placeholder="Search colleges..."
+                    className="w-48 rounded border border-input bg-background px-2 py-1 text-xs text-foreground placeholder:text-muted-foreground"
+                  />
+                </div>
+
+                <div className="mb-3 rounded border border-dashed bg-muted/30 p-3 text-xs text-foreground">
+                  <div className="mb-1 font-medium text-foreground">Selected colleges</div>
+                  <div className="text-muted-foreground">
+                    {(editingMapping?.inst_short_names ?? []).length === 0 ? (
+                      <span>No college selected yet.</span>
+                    ) : (
+                      <span>{(editingMapping?.inst_short_names ?? []).map((instShortName) => {
+                        const inst = institutes.find(item => item.inst_short_name === instShortName)
+                        return inst ? `${inst.inst_short_name} - ${inst.inst_full_name || 'College'}` : instShortName
+                      }).join(', ')}</span>
+                    )}
+                  </div>
+                </div>
+
+                <div className="max-h-48 space-y-2 overflow-auto rounded border border-input bg-background p-2">
+                  {(session?.role === 'CA' ? institutes.filter(item => item.inst_short_name === session.institute) : institutes)
+                    .filter(item => `${item.inst_short_name} ${item.inst_full_name ?? ''}`.toLowerCase().includes(mappingCollegeSearch.toLowerCase()))
+                    .length === 0 ? (
+                    <div className="text-sm text-muted-foreground">No institutes available.</div>
+                  ) : (session?.role === 'CA' ? institutes.filter(item => item.inst_short_name === session.institute) : institutes)
+                    .filter(item => `${item.inst_short_name} ${item.inst_full_name ?? ''}`.toLowerCase().includes(mappingCollegeSearch.toLowerCase()))
+                    .map((item) => {
+                      const checked = (editingMapping?.inst_short_names ?? []).includes(item.inst_short_name)
+                      return (
+                        <label key={item.inst_short_name} data-institute-option data-label={`${item.inst_short_name} ${item.inst_full_name ?? ''}`} className="flex items-center gap-2 rounded border p-2 text-sm text-foreground">
+                          <input type="checkbox" name="inst_short_names" value={item.inst_short_name} defaultChecked={checked} className="h-4 w-4" />
+                          <span className="font-medium">{item.inst_short_name}</span>
+                          <span className="text-muted-foreground">{item.inst_full_name || 'College details not available'}</span>
+                        </label>
+                      )
+                    })}
+                </div>
+              </div>
+
+              <div className="mt-5 flex gap-2 justify-end">
+                <Button type="button" variant="outline" onClick={() => { setShowMappingModal(false); setEditingMapping(null) }}>Cancel</Button>
+                <Button type="submit">Save</Button>
+              </div>
+            </form>
+          </div>
         </div>
       )}
+
       {showMappingDetails && mappingDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
           <div className="w-full max-w-3xl rounded-lg border bg-card p-6 shadow-lg overflow-auto max-h-[80vh]">
@@ -1976,17 +2092,17 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
               <div>
                 <h3 className="text-sm font-semibold">Course</h3>
                 <div className="mt-2 rounded border p-2">
-                  <div><strong>Code:</strong> {mappingDetails.course.course_code}</div>
-                  <div><strong>Short:</strong> {mappingDetails.course.course_short_name ?? '-'}</div>
-                  <div><strong>Full:</strong> {mappingDetails.course.course_full_name ?? '-'}</div>
+                  <div><strong>Code:</strong> {mappingDetails.course?.course_code ?? '-'}</div>
+                  <div><strong>Short:</strong> {mappingDetails.course?.course_short_name ?? '-'}</div>
+                  <div><strong>Full:</strong> {mappingDetails.course?.course_full_name ?? '-'}</div>
                 </div>
               </div>
               <div>
                 <h3 className="text-sm font-semibold">Subject</h3>
                 <div className="mt-2 rounded border p-2">
-                  <div><strong>Code:</strong> {mappingDetails.mapping?.subject_code ?? mappingDetails.mapping?.subject?.subject_code}</div>
-                  <div><strong>Short:</strong> {mappingDetails.mapping?.subject?.subject_short_name ?? '-'}</div>
-                  <div><strong>Full:</strong> {mappingDetails.mapping?.subject?.subject_full_name ?? '-'}</div>
+                  <div><strong>Code:</strong> {mappingDetails.subject?.subject_code ?? mappingDetails.mapping?.subject_code ?? '-'}</div>
+                  <div><strong>Short:</strong> {mappingDetails.subject?.subject_short_name ?? mappingDetails.mapping?.subject?.subject_short_name ?? '-'}</div>
+                  <div><strong>Full:</strong> {mappingDetails.subject?.subject_full_name ?? mappingDetails.mapping?.subject?.subject_full_name ?? '-'}</div>
                 </div>
               </div>
             </div>
@@ -1997,11 +2113,30 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
             <div className="mt-4 grid gap-4 md:grid-cols-2">
               <div>
                 <h3 className="text-sm font-semibold">Institutes Offering this Course</h3>
-                <div className="mt-2 space-y-2">{(mappingDetails.institutes ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No data available</div> : (mappingDetails.institutes ?? []).map((i: any) => <div key={i.inst_short_name} className="rounded border p-2">{i.inst_short_name} — {i.inst_full_name}</div>)}</div>
+                <div className="mt-2 space-y-2">
+                  {(mappingDetails.institutes ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No data available</div> : (mappingDetails.institutes ?? []).map((i: any) => (
+                    <div key={i.inst_short_name ?? i.institute?.inst_short_name ?? `${i.inst_short_name}-${i.inst_full_name}`} className="rounded border p-2">{i.inst_short_name ?? i.institute?.inst_short_name} — {i.inst_full_name ?? i.institute?.inst_full_name ?? '-'}</div>
+                  ))}
+                </div>
               </div>
               <div>
                 <h3 className="text-sm font-semibold">Faculty Associated</h3>
-                <div className="mt-2 space-y-2">{(mappingDetails.faculty ?? []).length === 0 ? <div className="text-sm text-muted-foreground">No data available</div> : (mappingDetails.faculty ?? []).filter((f: any) => Array.isArray(f.subjects) && f.subjects.some((s: any) => s.subject_code === (mappingDetails.mapping?.subject_code ?? mappingDetails.mapping?.subject?.subject_code))).map((f: any) => <div key={f.PAN} className="rounded border p-2">{f.faculty_name} — {f.PAN} — {f.inst_short_name} — {f.faculty_desig ?? '-'}</div>)}</div>
+                <div className="mt-2 space-y-2">
+                  {(() => {
+                    const rows = (mappingDetails.faculty ?? []).filter((f: any) => {
+                      const subjectCode = mappingDetails.mapping?.subject_code ?? mappingDetails.mapping?.subject?.subject_code ?? mappingDetails.subject?.subject_code
+                      const subjectList = Array.isArray(f.subjects) ? f.subjects : []
+                      if (subjectList.length === 0) return true
+                      return subjectList.some((item: any) => {
+                        const itemCode = String(item.subject_code ?? item.subject?.subject_code ?? '')
+                        return itemCode === subjectCode
+                      })
+                    })
+                    return rows.length === 0 ? <div className="text-sm text-muted-foreground">No data available</div> : rows.map((f: any) => (
+                      <div key={f.PAN} className="rounded border p-2">{f.faculty_name || f.PAN} — {f.PAN} — {f.inst_short_name || '-'} — {f.faculty_desig ?? '-'}</div>
+                    ))
+                  })()}
+                </div>
               </div>
             </div>
           </div>

@@ -24,6 +24,8 @@ model Institute {
   ExamHead_Email    String?      @db.VarChar(50)
   ExamHead_MobileNo String?      @db.VarChar(10)
   courses           InstCourse[]
+  courseSubjects    InstCourseSubject[]
+  specializations   InstSpec[]
   faculty           Faculty[]
 
   @@map("institute")
@@ -39,10 +41,11 @@ model User {
 }
 
 model Course {
-  course_code       String          @id @db.VarChar(191)
+  course_code       String          @id @db.VarChar(3)
   course_short_name String?         @db.VarChar(10)
   course_full_name  String?         @db.VarChar(100)
   institutes        InstCourse[]
+  courseSubjectInstitutes InstCourseSubject[]
   subjects          CourseSubject[]
 
   @@map("course")
@@ -53,6 +56,7 @@ model Specialization {
   spec_name String?       @db.VarChar(30)
   subjects  Subject[]
   faculty   FacultySpec[]
+  institutes InstSpec[]
 
   @@map("specialization")
 }
@@ -67,13 +71,14 @@ model Subject {
   specialization     Specialization?  @relation(fields: [spec_id], references: [spec_id])
   courses            CourseSubject[]
   faculty            FacultySubject[]
+  instituteMappings  InstCourseSubject[]
 
   @@map("subject")
 }
 
 model InstCourse {
   inst_short_name String    @db.VarChar(10)
-  course_code     String    @db.VarChar(191)
+  course_code     String    @db.VarChar(3)
   intake          Int?      @db.SmallInt
   strength        Int?      @db.SmallInt
   institute       Institute @relation(fields: [inst_short_name], references: [inst_short_name])
@@ -83,8 +88,20 @@ model InstCourse {
   @@map("inst_course")
 }
 
+model InstCourseSubject {
+  inst_short_name String    @db.VarChar(10)
+  course_code     String    @db.VarChar(3)
+  subject_code    String    @db.VarChar(10)
+  institute       Institute @relation(fields: [inst_short_name], references: [inst_short_name])
+  course          Course    @relation(fields: [course_code], references: [course_code])
+  subject         Subject   @relation(fields: [subject_code], references: [subject_code])
+
+  @@id([inst_short_name, course_code, subject_code])
+  @@map("inst_course_subject")
+}
+
 model CourseSubject {
-  course_code  String  @db.VarChar(191)
+  course_code  String  @db.VarChar(3)
   subject_code String  @db.VarChar(10)
   study_year   Int?    @db.TinyInt
   semester     Int?    @db.TinyInt
@@ -136,4 +153,14 @@ model FacultySpec {
 
   @@id([PAN, spec_id])
   @@map("faculty_spec")
+}
+
+model InstSpec {
+  inst_short_name String    @db.VarChar(10)
+  spec_id         Int       @db.TinyInt
+  institute       Institute @relation(fields: [inst_short_name], references: [inst_short_name])
+  specialization  Specialization @relation(fields: [spec_id], references: [spec_id])
+
+  @@id([inst_short_name, spec_id])
+  @@map("inst_spec")
 }
