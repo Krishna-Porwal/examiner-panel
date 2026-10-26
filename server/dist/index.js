@@ -294,7 +294,12 @@ app.get('/api/users/:user_name/:role', auth, allow('CE', 'CA'), async (req, res)
     });
 });
 app.post('/api/users', auth, allow('CE', 'CA'), async (req, res) => {
-    const parsed = zod_1.z.object({ user_name: zod_1.z.string().trim().min(1).max(10), role: zod_1.z.enum(['CA', 'FAC']), password: zod_1.z.string().min(8) }).safeParse(req.body);
+    const parsed = zod_1.z.object({
+        user_name: zod_1.z.string().trim().min(1).max(10),
+        role: zod_1.z.enum(['CA', 'FAC']),
+        password: zod_1.z.string().min(8),
+        inst_short_name: zod_1.z.string().trim().min(1).max(10).optional(),
+    }).safeParse(req.body);
     if (!parsed.success)
         return res.status(400).json({ error: 'Enter the username, role, and password.' });
     const user_name = normalizeUserName(parsed.data.user_name);
@@ -320,6 +325,16 @@ app.post('/api/users', auth, allow('CE', 'CA'), async (req, res) => {
             return res.status(400).json({ error: 'Faculty institute does not exist in the system.' });
         if (req.session?.role === 'CA' && institute.inst_short_name !== req.session.institute)
             return res.status(403).json({ error: 'College Admin can only create faculty credentials for their institute.' });
+        if (req.session?.role === 'CE') {
+            if (!parsed.data.inst_short_name)
+                return res.status(400).json({ error: 'College is required for a Programme Coordinator faculty credential.' });
+            const selectedInstitute = await findInstituteByCode(parsed.data.inst_short_name);
+            if (!selectedInstitute)
+                return res.status(400).json({ error: 'Selected college does not exist.' });
+            if (selectedInstitute.inst_short_name !== institute.inst_short_name) {
+                return res.status(400).json({ error: 'Faculty PAN does not belong to the selected college.' });
+            }
+        }
     }
     const existing = await findUserByCredential(user_name, role);
     if (existing)

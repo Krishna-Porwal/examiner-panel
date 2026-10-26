@@ -1,7 +1,7 @@
 'use client'
 
 import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { BookOpen, Building2, ClipboardList, Download, Key, LogOut, Menu, Plus, ShieldCheck, UserRound, Users, X } from 'lucide-react'
+import { ArrowUpRight, BookOpen, Building2, ClipboardList, Download, GraduationCap, Key, LogOut, Menu, Network, Plus, ShieldCheck, UserRound, Users, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import PasswordChange from '@/components/password-change'
 import InstituteProfileForm from '@/components/institute-profile-form'
@@ -631,9 +631,10 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [busy, setBusy] = useState(false)
   const [caCredential, setCaCredential] = useState<UserPayload>({ user_name: '', password: '', role: 'CA' })
   const [facCredential, setFacCredential] = useState<UserPayload>({ user_name: '', password: '', role: 'FAC' })
+  const [facCredentialInstitute, setFacCredentialInstitute] = useState('')
   const [users, setUsers] = useState<UserCredential[]>([])
   const [selectedCredential, setSelectedCredential] = useState<UserCredential | null>(null)
-  const [credentialFilter, setCredentialFilter] = useState<'ALL' | 'CA' | 'FAC'>('ALL')
+  const [credentialFilter, setCredentialFilter] = useState<'ALL' | 'CE' | 'CA' | 'FAC'>('ALL')
   const [selectedSpec, setSelectedSpec] = useState<Specialization | null>(null)
 
   const sessionToken = () => typeof window === 'undefined' ? '' : localStorage.getItem('token') ?? ''
@@ -909,11 +910,14 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   // Faculty available for credential creation (exclude those with FAC credentials)
   const availableFacultyForCredential = useMemo(() => {
     const existingFacCredentials = new Set(users.filter(u => u.role === 'FAC').map(u => u.user_name.toUpperCase()))
-    const base = session?.role === 'CA' || session?.role === 'FAC'
-      ? visibleFaculty.filter(f => !existingFacCredentials.has((f.PAN ?? '').toUpperCase()))
-      : visibleFaculty.filter(f => !existingFacCredentials.has((f.PAN ?? '').toUpperCase()))
-    return base
+    return visibleFaculty.filter(f => !existingFacCredentials.has((f.PAN ?? '').toUpperCase()))
   }, [visibleFaculty, users, session])
+
+  const credentialFacultyOptions = useMemo(() => {
+    const institute = session?.role === 'CA' ? session.institute : facCredentialInstitute
+    if (!institute) return []
+    return availableFacultyForCredential.filter(f => !institute || f.inst_short_name === institute)
+  }, [availableFacultyForCredential, session, facCredentialInstitute])
 
   // Institutes available for credential creation (exclude those with CA credentials)
   const availableInstitutesForCredential = useMemo(() => {
@@ -1572,36 +1576,51 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     setError('')
     setNotice('')
     try {
-      const normalizedUserName = normalizeUserName(payload.user_name)
+      let normalizedUserName = normalizeUserName(payload.user_name)
+      let facultyInstitute: string | undefined
+      if (type === 'CA') {
+        const normalizeInstituteLabel = (value: string) => normalizeSearchValue(value).replace(/[^a-z0-9]/g, '')
+        const typedInstituteName = normalizeInstituteLabel(payload.user_name)
+        const institute = institutes.find(item =>
+          normalizeInstituteLabel(item.inst_short_name) === typedInstituteName ||
+          normalizeInstituteLabel(item.inst_full_name ?? '') === typedInstituteName,
+        )
+        if (!institute) {
+          throw new Error('Enter a valid institute short name or full name.')
+        }
+        normalizedUserName = normalizeUserName(institute.inst_short_name)
+      } else {
+        const facultyRecord = faculty.find(item => normalizeUserName(item.PAN) === normalizedUserName)
+        if (!facultyRecord) throw new Error('Faculty record not found for this PAN.')
+        facultyInstitute = session.role === 'CA' ? session.institute : facCredentialInstitute
+        if (!facultyInstitute) throw new Error('Select the faculty member’s college before creating the credential.')
+        if (facultyRecord.inst_short_name !== facultyInstitute) {
+          throw new Error('The selected faculty PAN does not belong to the selected college.')
+        }
+      }
       const existing = users.find(u => u.user_name.toUpperCase() === normalizedUserName && u.role === type)
       if (existing) {
-        setError(`A credential already exists for this ${type === 'CA' ? 'institute' : 'faculty'} (${existing.user_name}). Please select or enter a different ${type === 'CA' ? 'institute code' : 'PAN'}.`)
-        return
+        const subject = type === 'CA' ? 'institute' : 'faculty'
+        throw new Error(`A credential already exists for this ${subject} (${existing.user_name}).`)
       }
-      const body = { user_name: normalizedUserName, role: type, password: payload.password.trim() }
-      console.log('Sending credential request:', body, 'Token:', sessionToken())
-      const result = await request('/api/users', { method: 'POST', body: JSON.stringify(body) })
-      console.log('Credential created:', result)
-      setNotice(`${type === 'CA' ? 'College Admin' : 'Faculty'} credential created for "${normalizedUserName}". They can now sign in with this username and password.`)
+      const body = {
+        user_name: normalizedUserName,
+        role: type,
+        password: payload.password.trim(),
+        ...(type === 'FAC' && session.role === 'CE' ? { inst_short_name: facultyInstitute } : {}),
+      }
+      await request('/api/users', { method: 'POST', body: JSON.stringify(body) })
+      const roleName = type === 'CA' ? 'College Admin' : 'Faculty'
+      setNotice(`${roleName} credential created for "${normalizedUserName}". They can now sign in with this username and password.`)
       setCaCredential({ user_name: '', password: '', role: 'CA' })
       setFacCredential({ user_name: '', password: '', role: 'FAC' })
+      setFacCredentialInstitute('')
+      const userRows = await request('/api/users')
+      setUsers(Array.isArray(userRows) ? userRows : [])
     } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Unable to create credential'
-      console.error('Credential creation error:', msg)
-      if (msg.toLowerCase().includes('already exists')) {
-        setError(`A login credential already exists for this ${type === 'CA' ? 'institute' : 'faculty'}. It has been removed from the list. Please refresh and try again.`)
-        setCaCredential({ user_name: '', password: '', role: 'CA' })
-        setFacCredential({ user_name: '', password: '', role: 'FAC' })
-      } else {
-        setError(msg)
-      }
+      setError(e instanceof Error ? e.message : 'Unable to create credential')
     } finally {
       setBusy(false)
-      try {
-        await loadData()
-      } catch (e) {
-        console.error('Failed to reload data:', e)
-           }
     }
   }
 
@@ -2318,8 +2337,9 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
               <div className="rounded-lg border bg-card p-4 text-foreground">
                 <div className="mb-4 flex items-center justify-between gap-2">
                   <h3 className="text-lg font-semibold">Existing Credentials</h3>
-                  <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                  <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CE' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
                     <option value="ALL">All</option>
+                    {isCentralExaminer && <option value="CE">Programme Coordinator</option>}
                     <option value="CA">College Admin</option>
                     <option value="FAC">Faculty</option>
                   </select>
@@ -2339,11 +2359,100 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
           {!isFaculty && (
             <>
               {active === 'Overview' && (
-                <div className="grid gap-4 sm:grid-cols-4">
-                  <Stat label="Institutes" value={institutes.length} icon={Building2} />
-                  <Stat label="Courses" value={courses.length} icon={BookOpen} />
-                  <Stat label="Subjects" value={subjects.length} icon={ClipboardList} />
-                  <Stat label="Faculty" value={faculty.length} icon={Users} />
+                <div className="space-y-6">
+                  <section className="relative overflow-hidden rounded-2xl border border-indigo-900/10 bg-gradient-to-br from-slate-950 via-indigo-950 to-blue-900 p-6 text-white shadow-sm sm:p-8">
+                    <div className="pointer-events-none absolute -right-16 -top-24 size-72 rounded-full bg-blue-400/15 blur-3xl" />
+                    <div className="pointer-events-none absolute bottom-0 right-1/3 size-40 rounded-full bg-violet-400/10 blur-3xl" />
+                    <div className="relative flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+                      <div className="max-w-2xl">
+                        <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/10 px-3 py-1.5 text-xs font-medium text-blue-100">
+                          <Network className="size-3.5" />
+                          Central coordination dashboard
+                        </div>
+                        <h2 className="text-2xl font-semibold tracking-tight sm:text-3xl">Global academic overview</h2>
+                        <p className="mt-2 max-w-xl text-sm leading-6 text-blue-100/80 sm:text-base">
+                          Monitor institutes, academic programs, subjects and faculty from one place.
+                        </p>
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        <Button variant="outline" className="border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white" onClick={() => setActive('Institutes')}>
+                          <Building2 className="size-4" /> Manage institutes
+                        </Button>
+                        <Button className="bg-white text-indigo-950 hover:bg-blue-50" onClick={() => setActive('Faculty')}>
+                          <Users className="size-4" /> View faculty
+                          <ArrowUpRight className="size-4" />
+                        </Button>
+                      </div>
+                    </div>
+                  </section>
+
+                  <section aria-label="Global totals" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+                    {[
+                      { label: 'Institutes', value: institutes.length, description: 'Colleges in the network', icon: Building2, color: 'text-blue-700', surface: 'bg-blue-50' },
+                      { label: 'Courses', value: courses.length, description: 'Programs in the catalog', icon: GraduationCap, color: 'text-violet-700', surface: 'bg-violet-50' },
+                      { label: 'Subjects', value: subjects.length, description: 'Subjects in the catalog', icon: ClipboardList, color: 'text-emerald-700', surface: 'bg-emerald-50' },
+                      { label: 'Faculty', value: faculty.length, description: 'Faculty records across institutes', icon: Users, color: 'text-amber-700', surface: 'bg-amber-50' },
+                    ].map(({ label, value, description, icon: Icon, color, surface }) => (
+                      <article key={label} className="group rounded-xl border bg-card p-5 shadow-sm transition-shadow hover:shadow-md">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-medium text-muted-foreground">{label}</p>
+                            <p className="mt-2 text-3xl font-semibold tracking-tight tabular-nums">{value.toLocaleString()}</p>
+                          </div>
+                          <div className={`flex size-11 items-center justify-center rounded-xl ${surface} ${color}`}>
+                            <Icon className="size-5" />
+                          </div>
+                        </div>
+                        <p className="mt-3 text-xs text-muted-foreground">{description}</p>
+                      </article>
+                    ))}
+                  </section>
+
+                  <div className="grid gap-4 lg:grid-cols-[1.3fr_1fr]">
+                    <section className="rounded-xl border bg-card p-5 shadow-sm">
+                      <div className="mb-4">
+                        <h3 className="font-semibold">Coordination shortcuts</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">Go directly to a key area of the system.</p>
+                      </div>
+                      <div className="grid gap-3 sm:grid-cols-3">
+                        {[
+                          { title: 'Institutes', description: 'Profiles and college mappings', icon: Building2, tab: 'Institutes', color: 'text-blue-700', surface: 'bg-blue-50' },
+                          { title: 'Courses', description: 'Programs and course mappings', icon: BookOpen, tab: 'Courses', color: 'text-violet-700', surface: 'bg-violet-50' },
+                          { title: 'Faculty', description: 'Faculty records and assignments', icon: Users, tab: 'Faculty', color: 'text-emerald-700', surface: 'bg-emerald-50' },
+                        ].map(({ title, description, icon: Icon, tab, color, surface }) => (
+                          <button key={tab} type="button" onClick={() => setActive(tab)} className="group flex min-h-28 flex-col items-start rounded-lg border p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted/40">
+                            <span className={`mb-3 flex size-9 items-center justify-center rounded-lg ${surface} ${color}`}><Icon className="size-4" /></span>
+                            <span className="flex w-full items-center justify-between font-medium">
+                              {title}<ArrowUpRight className="size-4 text-muted-foreground transition-transform group-hover:-translate-y-0.5 group-hover:translate-x-0.5" />
+                            </span>
+                            <span className="mt-1 text-xs leading-5 text-muted-foreground">{description}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+
+                    <section className="rounded-xl border bg-card p-5 shadow-sm">
+                      <div className="mb-4">
+                        <h3 className="font-semibold">Mapping activity</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">Current academic relationships configured.</p>
+                      </div>
+                      <div className="space-y-1">
+                        {[
+                          { label: 'Course–college mappings', value: instCourseMappings.length, icon: Building2 },
+                          { label: 'Course–subject mappings', value: courseSubjectMappings.length, icon: BookOpen },
+                          { label: 'Specialization–college mappings', value: instSpecMappings.length, icon: GraduationCap },
+                        ].map(({ label, value, icon: Icon }) => (
+                          <div key={label} className="flex items-center justify-between gap-3 border-b py-3 last:border-0">
+                            <div className="flex items-center gap-3">
+                              <span className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground"><Icon className="size-4" /></span>
+                              <span className="text-sm">{label}</span>
+                            </div>
+                            <span className="font-semibold tabular-nums">{value.toLocaleString()}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </section>
+                  </div>
                 </div>
               )}
 
@@ -2597,8 +2706,9 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     <>
                       <div className="mb-4 flex gap-2">
                         <input value={userSearch} onChange={e => setUserSearch(e.target.value)} placeholder="Search users..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                        <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                        <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CE' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
                           <option value="ALL">All</option>
+                          {isCentralExaminer && <option value="CE">Programme Coordinator</option>}
                           <option value="CA">College Admin</option>
                           <option value="FAC">Faculty</option>
                         </select>
@@ -2606,11 +2716,11 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                       <div className="space-y-2">
                         {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No users found.</p> : visibleUsers.map(item => (
                           <div key={`${item.user_name}-${item.role}`} className="flex items-center justify-between rounded border p-3">
-                            <div><div className="font-medium">{item.user_name}</div><div className="text-sm text-muted-foreground">{item.role === 'CA' ? 'College Admin' : 'Faculty'} • {item.role === 'CA' ? 'Institute Login' : 'Faculty Login'}</div></div>
-                            <div className="flex gap-2">
+                            <div><div className="font-medium">{item.user_name}</div><div className="text-sm text-muted-foreground">{item.role === 'CE' ? 'Programme Coordinator' : item.role === 'CA' ? 'College Admin • Institute Login' : 'Faculty • Faculty Login'}</div></div>
+                            {item.role !== 'CE' && <div className="flex gap-2">
                               <Button size="sm" variant="outline" onClick={() => viewCredential(item.user_name, item.role)}>View</Button>
                               {(!isCollegeAdmin || item.role === 'FAC') && <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(item.user_name, item.role)}>Revoke</Button>}
-                            </div>
+                            </div>}
                           </div>
                         ))}
                       </div>
@@ -2770,26 +2880,71 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     <div className="mt-4 grid gap-4 lg:grid-cols-2">
                       <div className="space-y-3 rounded border p-4">
                         <h3 className="font-semibold">College Admin Credential</h3>
-                        <select value={caCredential.user_name} onChange={e => setCaCredential(prev => ({ ...prev, user_name: e.target.value }))} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                          <option value="">Select institute</option>
+                        <input
+                          list="ce-credential-institute-options"
+                          value={caCredential.user_name}
+                          onChange={e => setCaCredential(prev => ({ ...prev, user_name: e.target.value }))}
+                          autoComplete="organization"
+                          placeholder="Select or type institute code or name"
+                          disabled={busy}
+                          className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground"
+                        />
+                        <datalist id="ce-credential-institute-options">
                           {availableInstitutesForCredential.map(item => (
-                            <option key={item.inst_short_name} value={item.inst_short_name}>{item.inst_short_name} — {item.inst_full_name || 'Institute'}</option>
+                            <option key={item.inst_short_name} value={item.inst_short_name}>{item.inst_full_name || 'Institute'}</option>
                           ))}
-                        </select>
-                        <input value={caCredential.password} onChange={e => setCaCredential(prev => ({ ...prev, password: e.target.value }))} type="password" placeholder="Password" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                        <Button onClick={() => saveCredential('CA', caCredential)}>Create College Admin Credential</Button>
+                        </datalist>
+                        <input value={caCredential.password} onChange={e => setCaCredential(prev => ({ ...prev, password: e.target.value }))} type="password" minLength={8} autoComplete="new-password" placeholder="Password (at least 8 characters)" disabled={busy} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                        <Button type="button" disabled={busy || !caCredential.user_name.trim() || caCredential.password.length < 8} onClick={() => saveCredential('CA', caCredential)}>Create College Admin Credential</Button>
                       </div>
 
                       <div className="space-y-3 rounded border p-4">
                         <h3 className="font-semibold">Faculty Credential</h3>
-                        <select value={facCredential.user_name} onChange={e => setFacCredential(prev => ({ ...prev, user_name: e.target.value }))} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
-                          <option value="">Select faculty PAN</option>
-                          {availableFacultyForCredential.map(f => (
-                            <option key={f.PAN} value={f.PAN}>{f.faculty_name || f.PAN} — {f.PAN}</option>
+                        {isCentralExaminer ? (
+                          <select
+                            value={facCredentialInstitute}
+                            onChange={e => {
+                              setFacCredentialInstitute(e.target.value)
+                              setFacCredential(prev => ({ ...prev, user_name: '' }))
+                            }}
+                            disabled={busy}
+                            className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground"
+                          >
+                            <option value="">Select college</option>
+                            {institutes.map(institute => (
+                              <option key={institute.inst_short_name} value={institute.inst_short_name}>
+                                {institute.inst_short_name} — {institute.inst_full_name || 'College'}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <p className="rounded border bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+                            College: {session.institute || 'No college assigned'}
+                          </p>
+                        )}
+                        <input
+                          list="ce-credential-faculty-options"
+                          value={facCredential.user_name}
+                          onChange={e => setFacCredential(prev => ({ ...prev, user_name: e.target.value }))}
+                          maxLength={10}
+                          autoComplete="off"
+                          placeholder="Select or type faculty PAN"
+                          disabled={busy || !credentialFacultyOptions.length}
+                          className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground"
+                        />
+                        <datalist id="ce-credential-faculty-options">
+                          {credentialFacultyOptions.map(f => (
+                            <option key={f.PAN} value={f.PAN}>{f.faculty_name || f.PAN} — {f.inst_short_name}</option>
                           ))}
-                        </select>
-                        <input value={facCredential.password} onChange={e => setFacCredential(prev => ({ ...prev, password: e.target.value }))} type="password" placeholder="Password" className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                        <Button onClick={() => saveCredential('FAC', facCredential)}>Create Faculty Credential</Button>
+                        </datalist>
+                        <input value={facCredential.password} onChange={e => setFacCredential(prev => ({ ...prev, password: e.target.value }))} type="password" minLength={8} autoComplete="new-password" placeholder="Password (at least 8 characters)" disabled={busy} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                        <Button
+                          type="button"
+                          disabled={busy || !facCredential.user_name.trim() || facCredential.password.length < 8 || (isCentralExaminer && !facCredentialInstitute)}
+                          onClick={() => saveCredential('FAC', facCredential)}
+                        >
+                          Create Faculty Credential
+                        </Button>
                       </div>
                     </div>
                   </div>
@@ -2797,8 +2952,9 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                   <div className="rounded-lg border bg-card p-4 text-foreground">
                     <div className="mb-4 flex items-center justify-between gap-2">
                       <h3 className="text-lg font-semibold">Existing Credentials</h3>
-                      <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                      <select value={credentialFilter} onChange={e => setCredentialFilter(e.target.value as 'ALL' | 'CE' | 'CA' | 'FAC')} className="rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
                         <option value="ALL">All</option>
+                        {isCentralExaminer && <option value="CE">Programme Coordinator</option>}
                         <option value="CA">College Admin</option>
                         <option value="FAC">Faculty</option>
                       </select>
@@ -2806,11 +2962,11 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     <div className="space-y-2">
                       {visibleUsers.length === 0 ? <p className="text-sm text-muted-foreground">No credentials created yet.</p> : visibleUsers.map(item => (
                         <div key={`${item.user_name}-${item.role}`} className="flex items-center justify-between rounded border p-3">
-                          <div><div className="font-medium">{item.user_name}</div><div className="text-sm text-muted-foreground">{item.role === 'CA' ? 'College Admin' : 'Faculty'} role</div></div>
-                          <div className="flex gap-2">
+                          <div><div className="font-medium">{item.user_name}</div><div className="text-sm text-muted-foreground">{item.role === 'CE' ? 'Programme Coordinator' : item.role === 'CA' ? 'College Admin' : 'Faculty'} role</div></div>
+                          {item.role !== 'CE' && <div className="flex gap-2">
                             <Button size="sm" variant="outline" onClick={() => viewCredential(item.user_name, item.role)}>View</Button>
                             {(!isCollegeAdmin || item.role === 'FAC') && <Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteCredential(item.user_name, item.role)}>Revoke</Button>}
-                          </div>
+                          </div>}
                         </div>
                       ))}
                     </div>
