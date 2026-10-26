@@ -354,9 +354,21 @@ app.put('/api/faculty/:PAN', auth, allow('CE', 'CA', 'FAC'), async (req, res) =>
     }
     if (req.session?.role === 'CA' && existing.inst_short_name !== req.session.institute)
         return res.status(403).json({ error: 'Faculty not found in your institute' });
-    const allowed = ['Title', 'faculty_name', 'faculty_desig', 'faculty_total_exp', 'faculty_address', 'faculty_Email', 'faculty_MobileNo'];
-    const data = Object.fromEntries(Object.entries(req.body).filter(([key]) => allowed.includes(key)));
-    return res.json(await prisma.faculty.update({ where: { PAN: pan }, data: { ...data, entered_by: req.session?.user_name, entered_on: new Date() } }));
+    const parsed = zod_1.z.object({
+        Title: zod_1.z.string().max(10).optional(),
+        faculty_name: zod_1.z.string().max(50).optional(),
+        faculty_desig: zod_1.z.string().max(25).optional(),
+        faculty_total_exp: zod_1.z.coerce.number().int().optional(),
+        faculty_address: zod_1.z.string().max(100).optional(),
+        faculty_Email: zod_1.z.string().email().max(50).optional(),
+        faculty_MobileNo: zod_1.z.string().max(10).optional(),
+    }).safeParse(req.body);
+    if (!parsed.success)
+        return res.status(400).json({ error: 'Invalid faculty details', details: parsed.error.issues.map(issue => issue.message) });
+    return res.json(await prisma.faculty.update({
+        where: { PAN: pan },
+        data: { ...parsed.data, entered_by: req.session?.user_name, entered_on: new Date() },
+    }));
 });
 const mappingModels = {
     'institute-courses': 'instCourse',
@@ -429,6 +441,23 @@ app.post('/api/faculty-subjects', auth, allow('CE', 'CA', 'FAC'), async (req, re
     const subject = await prisma.subject.findUnique({ where: { subject_code: parsed.subject_code } });
     if (!subject)
         return res.status(404).json({ error: 'Subject not found' });
+    if (req.session?.role === 'FAC') {
+        const institute = req.session.institute;
+        if (!institute || facultyRow.inst_short_name !== institute)
+            return res.status(403).json({ error: 'Faculty must belong to your institute' });
+        const [directMapping, courseMapping] = await Promise.all([
+            prismaAny.instCourseSubject.findFirst({
+                where: { inst_short_name: institute, subject_code: parsed.subject_code },
+                select: { subject_code: true },
+            }),
+            prisma.courseSubject.findFirst({
+                where: { subject_code: parsed.subject_code, course: { institutes: { some: { inst_short_name: institute } } } },
+                select: { subject_code: true },
+            }),
+        ]);
+        if (!directMapping && !courseMapping)
+            return res.status(403).json({ error: 'Subject is not assigned to your institute' });
+    }
     const existing = await prisma.facultySubject.findUnique({ where: { PAN_subject_code: { PAN: parsed.PAN, subject_code: parsed.subject_code } } });
     if (existing)
         return res.status(409).json({ error: 'Subject mapping already exists' });
@@ -487,6 +516,16 @@ app.post('/api/faculty-specializations', auth, allow('CE', 'CA', 'FAC'), async (
     const specialization = await prisma.specialization.findUnique({ where: { spec_id: parsed.spec_id } });
     if (!specialization)
         return res.status(404).json({ error: 'Specialization not found' });
+    if (req.session?.role === 'FAC') {
+        const institute = req.session.institute;
+        if (!institute || facultyRow.inst_short_name !== institute)
+            return res.status(403).json({ error: 'Faculty must belong to your institute' });
+        const instituteMapping = await prisma.instSpec.findUnique({
+            where: { inst_short_name_spec_id: { inst_short_name: institute, spec_id: parsed.spec_id } },
+        });
+        if (!instituteMapping)
+            return res.status(403).json({ error: 'Specialization is not assigned to your institute' });
+    }
     const existing = await prisma.facultySpec.findUnique({ where: { PAN_spec_id: { PAN: parsed.PAN, spec_id: parsed.spec_id } } });
     if (existing)
         return res.status(409).json({ error: 'Specialization mapping already exists' });
@@ -720,6 +759,9 @@ app.get('/api/subjects', auth, async (req, res) => {
             courseCodes.add(row.course_code);
         }
         const subjectCodes = new Set((await prisma.courseSubject.findMany({ where: { course_code: { in: [...courseCodes] } }, select: { subject_code: true } })).map(item => item.subject_code));
+        for (const row of await prismaAny.instCourseSubject.findMany({ where: { inst_short_name: inst }, select: { subject_code: true } })) {
+            subjectCodes.add(row.subject_code);
+        }
         rows = rows.filter(row => subjectCodes.has(row.subject_code));
     }
     return res.json(rows);
@@ -805,7 +847,7 @@ app.delete('/api/subjects/:subject_code', auth, allow('CE'), async (req, res) =>
 });
 app.get('/api/specializations', auth, async (req, res) => {
     let rows = await prisma.specialization.findMany({ orderBy: { spec_id: 'asc' } });
-    if (req.session?.role === 'CA') {
+    if (req.session?.role === 'CA' || req.session?.role === 'FAC') {
         const inst = req.session.institute;
         if (!inst)
             return res.json([]);

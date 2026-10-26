@@ -98,7 +98,7 @@ function downloadCsv(filename: string, headers: string[], rows: Record<string, a
   URL.revokeObjectURL(url)
 }
 const roleLabels: Record<string, string> = { CE: 'Programme Coordinator', CA: 'College Admin', FAC: 'College User' }
-const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['Dashboard', 'Faculty', 'Courses', 'Specializations', 'Subjects'] }
+const navFor: Record<string, string[]> = { CE: ['Overview', 'Institutes', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], CA: ['My College', 'Courses', 'Specializations', 'Subjects', 'Faculty', 'Users', 'Credentials'], FAC: ['Dashboard', 'Faculty'] }
 function ErrorAlert({ msg }: { msg: string }) {
   return msg ? <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-700">{msg}</div> : null
 }
@@ -273,7 +273,36 @@ function InstituteDetailsModal({ details, onClose }: any) {
   )
 }
 
-function FacultyForm({ fac, onClose, onSubmit, role }: any) {
+function FacultyForm({
+  fac,
+  onClose,
+  onSubmit,
+  role,
+  availableSubjects = [],
+  availableSpecializations = [],
+  facultySubjects = [],
+  facultySpecs = [],
+}: any) {
+  const [subjectSearch, setSubjectSearch] = useState('')
+  const [specializationSearch, setSpecializationSearch] = useState('')
+  const [selectedSubjectCodes, setSelectedSubjectCodes] = useState<string[]>(() =>
+    facultySubjects.filter((item: FacultySubjectMap) => item.PAN === fac?.PAN).map((item: FacultySubjectMap) => item.subject_code)
+  )
+  const [selectedSpecIds, setSelectedSpecIds] = useState<string[]>(() =>
+    facultySpecs.filter((item: FacultySpecMap) => item.PAN === fac?.PAN).map((item: FacultySpecMap) => String(item.spec_id))
+  )
+  const mappedSubjectCodes = new Set(
+    facultySubjects.filter((item: FacultySubjectMap) => item.PAN === fac?.PAN).map((item: FacultySubjectMap) => item.subject_code)
+  )
+  const mappedSpecIds = new Set(
+    facultySpecs.filter((item: FacultySpecMap) => item.PAN === fac?.PAN).map((item: FacultySpecMap) => item.spec_id)
+  )
+  const filteredSubjects = availableSubjects.filter((subject: Subject) =>
+    `${subject.subject_code} ${subject.subject_full_name ?? ''} ${subject.subject_short_name ?? ''}`.toLowerCase().includes(subjectSearch.trim().toLowerCase())
+  )
+  const filteredSpecializations = availableSpecializations.filter((specialization: Specialization) =>
+    `${specialization.spec_id} ${specialization.spec_name ?? ''}`.toLowerCase().includes(specializationSearch.trim().toLowerCase())
+  )
   const fields = [
     { name: 'PAN', label: 'PAN', required: true, readOnly: Boolean(fac?.PAN) },
     { name: 'Title', label: 'Title' },
@@ -285,7 +314,60 @@ function FacultyForm({ fac, onClose, onSubmit, role }: any) {
     { name: 'faculty_Email', label: 'Email', type: 'email' },
     { name: 'faculty_MobileNo', label: 'Mobile Number' },
   ]
-  return <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30"><form onSubmit={onSubmit} className="w-full max-w-2xl rounded-lg border bg-card p-6 shadow-lg"><div className="mb-4 flex justify-between items-start"><h2 className="text-lg font-semibold text-foreground">{fac?.PAN ? 'Edit' : 'Add'} Faculty</h2><button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button></div><div className="grid gap-3 md:grid-cols-2 mb-4">{fields.map(field => <label key={field.name} className="block"><span className="text-sm font-medium text-foreground">{field.label}</span><input name={field.name} type={field.type ?? 'text'} defaultValue={fac?.[field.name] ?? ''} readOnly={field.readOnly} required={field.required} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70" /></label>)}</div><div className="flex gap-2 justify-end"><Button type="button" variant="outline" onClick={onClose}>Cancel</Button><Button type="submit">Save</Button></div></form></div>
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
+      <form onSubmit={onSubmit} className="max-h-[90vh] w-full max-w-3xl overflow-auto rounded-lg border bg-card p-6 shadow-lg">
+        <div className="mb-4 flex justify-between items-start">
+          <h2 className="text-lg font-semibold text-foreground">{fac?.PAN ? 'Edit' : 'Add'} Faculty</h2>
+          <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground"><X className="size-5" /></button>
+        </div>
+        <div className="mb-4 grid gap-3 md:grid-cols-2">
+          {fields.map(field => (
+            <label key={field.name} className="block">
+              <span className="text-sm font-medium text-foreground">{field.label}</span>
+              <input name={field.name} type={field.type ?? 'text'} defaultValue={fac?.[field.name] ?? ''} readOnly={field.readOnly} required={field.required} className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm text-foreground placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-70" />
+            </label>
+          ))}
+        </div>
+        {role === 'FAC' && (
+          <div className="mb-4 grid gap-4 md:grid-cols-2">
+            {selectedSubjectCodes.map(subjectCode => <input key={subjectCode} type="hidden" name="faculty_subject_codes" value={subjectCode} />)}
+            {selectedSpecIds.map(specId => <input key={specId} type="hidden" name="faculty_spec_ids" value={specId} />)}
+            <div>
+              <label className="block text-sm font-medium text-foreground" htmlFor="faculty-subject-search">Add Subjects</label>
+              <input id="faculty-subject-search" type="search" value={subjectSearch} onChange={event => setSubjectSearch(event.target.value)} placeholder="Search this college's subjects..." className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+              <div className="mt-2 max-h-48 space-y-1 overflow-auto rounded border border-input p-2">
+                {filteredSubjects.length === 0 ? <p className="text-sm text-muted-foreground">No subjects found.</p> : filteredSubjects.map((subject: Subject) => (
+                  <label key={subject.subject_code} className="flex items-center gap-2 rounded p-1 text-sm text-foreground hover:bg-muted">
+                    <input type="checkbox" checked={selectedSubjectCodes.includes(subject.subject_code)} onChange={event => setSelectedSubjectCodes(codes => event.target.checked ? [...new Set([...codes, subject.subject_code])] : codes.filter(code => code !== subject.subject_code))} className="h-4 w-4" />
+                    <span>{subject.subject_code} — {subject.subject_full_name || subject.subject_short_name || 'Subject'}</span>
+                  </label>
+                ))}
+              </div>
+              {mappedSubjectCodes.size > 0 && <p className="mt-1 text-xs text-muted-foreground">Checked subjects are already assigned. Uncheck to remove a mapping.</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-foreground" htmlFor="faculty-specialization-search">Add Specializations</label>
+              <input id="faculty-specialization-search" type="search" value={specializationSearch} onChange={event => setSpecializationSearch(event.target.value)} placeholder="Search this college's specializations..." className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+              <div className="mt-2 max-h-48 space-y-1 overflow-auto rounded border border-input p-2">
+                {filteredSpecializations.length === 0 ? <p className="text-sm text-muted-foreground">No specializations found.</p> : filteredSpecializations.map((specialization: Specialization) => (
+                  <label key={specialization.spec_id} className="flex items-center gap-2 rounded p-1 text-sm text-foreground hover:bg-muted">
+                    <input type="checkbox" checked={selectedSpecIds.includes(String(specialization.spec_id))} onChange={event => setSelectedSpecIds(ids => event.target.checked ? [...new Set([...ids, String(specialization.spec_id)])] : ids.filter(id => id !== String(specialization.spec_id)))} className="h-4 w-4" />
+                    <span>{specialization.spec_name || `Spec ${specialization.spec_id}`}</span>
+                  </label>
+                ))}
+              </div>
+              {mappedSpecIds.size > 0 && <p className="mt-1 text-xs text-muted-foreground">Checked specializations are already assigned. Uncheck to remove a mapping.</p>}
+            </div>
+          </div>
+        )}
+        <div className="flex gap-2 justify-end">
+          <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>
+          <Button type="submit">Save</Button>
+        </div>
+      </form>
+    </div>
+  )
 }
 
 function InstituteForm({ inst, onClose, onSubmit, role }: any) {
@@ -416,8 +498,8 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       const facultyRows = await request('/api/faculty').catch(() => [])
       const instituteRows = session?.role !== 'FAC' ? await request('/api/institutes').catch(() => []) : []
       const courseRows = session?.role !== 'FAC' ? await request('/api/courses').catch(() => []) : []
-      const subjectRows = session?.role !== 'FAC' ? await request('/api/subjects').catch(() => []) : []
-      const specRows = session?.role !== 'FAC' ? await request('/api/specializations').catch(() => []) : []
+      const subjectRows = await request('/api/subjects').catch(() => [])
+      const specRows = await request('/api/specializations').catch(() => [])
       const facultySubjectRows = await request('/api/faculty-subjects').catch(() => [])
       const facultySpecRows = await request('/api/faculty-specializations').catch(() => [])
       const instCourseRows = session?.role !== 'FAC' ? await request('/api/inst-courses').catch(() => []) : []
@@ -655,7 +737,10 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     setError('')
     setNotice('')
     try {
+      const formData = new FormData(e.currentTarget)
       const payload = sanitizeFormPayload(e.currentTarget)
+      delete payload.faculty_subject_codes
+      delete payload.faculty_spec_ids
       if (!payload.PAN || String(payload.PAN).trim().length === 0) {
         throw new Error('PAN is required.')
       }
@@ -665,8 +750,45 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
         body: JSON.stringify(payload),
       })
       setFaculty(rows => (isCreate ? [...rows, saved] : rows.map(row => (row.PAN === saved.PAN ? saved : row))))
-      setSelected(saved)
       setEditing(null)
+      setSelected(saved)
+
+      if (session?.role === 'FAC') {
+        const selectedSubjectCodes = [...new Set(formData.getAll('faculty_subject_codes').map(String))]
+        const selectedSpecIds = [...new Set(formData.getAll('faculty_spec_ids').map(String))]
+        const existingSubjectCodes = facultySubjects.filter(item => item.PAN === saved.PAN).map(item => item.subject_code)
+        const existingSpecIds = facultySpecs.filter(item => item.PAN === saved.PAN).map(item => String(item.spec_id))
+        const availableSubjectCodes = new Set(subjects.map(item => item.subject_code))
+        const availableSpecIds = new Set(specializations.map(item => String(item.spec_id)))
+        const subjectMappingsToAdd = selectedSubjectCodes.filter(code => !existingSubjectCodes.includes(code))
+        const subjectMappingsToRemove = existingSubjectCodes.filter(code => availableSubjectCodes.has(code) && !selectedSubjectCodes.includes(code))
+        const specMappingsToAdd = selectedSpecIds.filter(id => !existingSpecIds.includes(id))
+        const specMappingsToRemove = existingSpecIds.filter(id => availableSpecIds.has(id) && !selectedSpecIds.includes(id))
+        try {
+          await Promise.all([
+            ...subjectMappingsToAdd.map(subject_code => request('/api/faculty-subjects', {
+              method: 'POST',
+              body: JSON.stringify({ PAN: saved.PAN, subject_code }),
+            })),
+            ...subjectMappingsToRemove.map(subject_code => request(`/api/faculty-subjects/${encodeURIComponent(saved.PAN)}/${encodeURIComponent(subject_code)}`, {
+              method: 'DELETE',
+            })),
+            ...specMappingsToAdd.map(spec_id => request('/api/faculty-specializations', {
+              method: 'POST',
+              body: JSON.stringify({ PAN: saved.PAN, spec_id: Number(spec_id) }),
+            })),
+            ...specMappingsToRemove.map(spec_id => request(`/api/faculty-specializations/${encodeURIComponent(saved.PAN)}/${encodeURIComponent(spec_id)}`, {
+              method: 'DELETE',
+            })),
+          ])
+        } catch (mappingError) {
+          await loadData()
+          const detail = mappingError instanceof Error ? mappingError.message : 'Unknown mapping error'
+          setError(`Faculty details were saved, but one or more subject or specialization mappings could not be updated: ${detail}`)
+          return
+        }
+      }
+
       setNotice('Faculty saved successfully.')
       await loadData()
     } catch (e) {
@@ -1443,19 +1565,18 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
 
   const facultyDashboard = useMemo(() => {
     const instituteFaculty = session?.role === 'FAC' ? faculty.filter(item => item.inst_short_name === session.institute) : faculty
-    const instituteSubjects = session?.role === 'FAC' ? subjects.filter(subject => {
-      const courseCodes = courseSubjectMappings.filter(mapping => mapping.subject_code === subject.subject_code).map(mapping => mapping.course_code)
-      return courseCodes.some(courseCode => instCourseMappings.some(mapping => mapping.inst_short_name === session.institute && mapping.course_code === courseCode))
-    }) : subjects
+    const instituteSubjects = subjects
+    const instituteSpecializations = specializations
     const facultySubjectCount = session?.role === 'FAC' ? facultySubjects.filter(item => instituteFaculty.some(f => f.PAN === item.PAN)) : facultySubjects
     const facultySpecCount = session?.role === 'FAC' ? facultySpecs.filter(item => instituteFaculty.some(f => f.PAN === item.PAN)) : facultySpecs
     return {
       totalFaculty: instituteFaculty.length,
       totalSubjects: instituteSubjects.length,
+      totalSpecializations: instituteSpecializations.length,
       totalFacultySubjectMappings: facultySubjectCount.length,
       totalFacultySpecializationMappings: facultySpecCount.length,
     }
-  }, [session, faculty, subjects, facultySubjects, facultySpecs, courseSubjectMappings, instCourseMappings])
+  }, [session, faculty, subjects, specializations, facultySubjects, facultySpecs])
 
   async function addFacultyRecordFromForm(form: HTMLFormElement) {
     const payload = sanitizeFormPayload(form)
@@ -1614,9 +1735,10 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                 <h2 className="text-2xl font-bold text-foreground">College User</h2>
                 <p className="mt-1 text-sm text-muted-foreground">Institute: {session.institute || 'Not assigned'}</p>
               </div>
-              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
                 <Stat label="Total Faculty" value={facultyDashboard.totalFaculty} icon={Users} />
                 <Stat label="Total Subjects" value={facultyDashboard.totalSubjects} icon={BookOpen} />
+                <Stat label="Total Specializations" value={facultyDashboard.totalSpecializations} icon={ShieldCheck} />
                 <Stat label="Total Faculty-Subject Mappings" value={facultyDashboard.totalFacultySubjectMappings} icon={ClipboardList} />
                 <Stat label="Total Faculty-Specialization Mappings" value={facultyDashboard.totalFacultySpecializationMappings} icon={ShieldCheck} />
               </div>
@@ -1625,8 +1747,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                 <div className="flex flex-wrap gap-2">
                   <Button onClick={() => setEditing({ PAN: '', Title: '', faculty_name: '', inst_short_name: session.institute ?? '', faculty_desig: '', faculty_total_exp: 0, faculty_address: '', faculty_Email: '', faculty_MobileNo: '', entered_by: '', entered_on: '' })}><Plus className="size-4" /> Add Faculty</Button>
                   <Button variant="outline" onClick={() => setActive('Faculty')}>Manage Faculty</Button>
-                  <Button variant="outline" onClick={() => setActive('Courses')}>Faculty Subject Mapping</Button>
-                  <Button variant="outline" onClick={() => setActive('Specializations')}>Faculty Specialization Mapping</Button>
                 </div>
               </div>
             </div>
@@ -2048,7 +2168,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       </main>
 
       {selected && <FacultyDialog fac={selected} onClose={() => setSelected(null)} onEdit={() => { setEditing(selected); setSelected(null) }} subjects={subjects} courseSubjectMappings={courseSubjectMappings} facultySubjects={facultySubjects} facultySpecs={facultySpecs} specializations={specializations} />}
-      {editing && <FacultyForm fac={editing} onClose={() => setEditing(null)} onSubmit={saveFaculty} role={session.role} />}
+      {editing && <FacultyForm fac={editing} onClose={() => setEditing(null)} onSubmit={saveFaculty} role={session.role} availableSubjects={subjects} availableSpecializations={specializations} facultySubjects={facultySubjects} facultySpecs={facultySpecs} />}
       {editingCourse && <CourseForm course={editingCourse} onClose={() => setEditingCourse(null)} onSubmit={saveCourse} />}
       {editingSpec && <SpecializationForm item={editingSpec} onClose={() => setEditingSpec(null)} onSubmit={saveSpecialization} />}
       {editingSubject && <SubjectForm item={editingSubject} onClose={() => setEditingSubject(null)} onSubmit={saveSubject} specializations={specializations} />}
