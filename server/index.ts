@@ -67,6 +67,11 @@ function enforceFacultyInstituteScope(req: AuthedRequest, pan: string) {
 }
 function safe(row: Record<string, unknown>) { const copy = { ...row }; delete copy.password; return copy }
 function normalizeUserName(value: string) { return value.trim().toUpperCase().replace(/\s+/g, '') }
+const optionalEmailSchema = z.preprocess(
+  value => value === '' ? null : value,
+  z.string().trim().email().max(50).nullable().optional(),
+)
+const optionalInstituteText = (maxLength: number) => z.string().trim().max(maxLength).nullable().optional()
 
 async function resolveInstituteForUser(userName: string, role: Role) {
   const normalized = normalizeUserName(userName)
@@ -224,6 +229,44 @@ app.get('/api/users', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) =
   return res.json(scoped.map(row => ({ ...row, password: undefined })))
 })
 
+app.get('/api/users/:user_name/:role', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const userName = normalizeUserName(String(req.params.user_name))
+  const role = String(req.params.role).toUpperCase()
+  if (role !== 'CA' && role !== 'FAC') return res.status(400).json({ error: 'Invalid user role.' })
+
+  const credential = await findUserByCredential(userName, role)
+  if (!credential) return res.status(404).json({ error: 'Credential not found.' })
+  if (req.session?.role === 'CA') {
+    if (role === 'CA') {
+      if (userName !== req.session.institute) return res.status(403).json({ error: 'College Admin can only view their own credential.' })
+      const institute = await findInstituteByCode(userName)
+      return res.json({ user_name: credential.user_name, role: credential.role, institute: institute?.inst_short_name })
+    }
+    const facultyRecord = await findFacultyByPan(userName)
+    if (!facultyRecord || facultyRecord.inst_short_name !== req.session.institute) {
+      return res.status(403).json({ error: 'College Admin can only view faculty credentials from their institute.' })
+    }
+    return res.json({
+      user_name: credential.user_name,
+      role: credential.role,
+      institute: facultyRecord.inst_short_name,
+      faculty_name: facultyRecord.faculty_name,
+    })
+  }
+
+  if (role === 'CA') {
+    const institute = await findInstituteByCode(userName)
+    return res.json({ user_name: credential.user_name, role: credential.role, institute: institute?.inst_short_name })
+  }
+  const facultyRecord = await findFacultyByPan(userName)
+  return res.json({
+    user_name: credential.user_name,
+    role: credential.role,
+    institute: facultyRecord?.inst_short_name,
+    faculty_name: facultyRecord?.faculty_name,
+  })
+})
+
 app.post('/api/users', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
   const parsed = z.object({ user_name: z.string().trim().min(1).max(10), role: z.enum(['CA', 'FAC']), password: z.string().min(8) }).safeParse(req.body)
   if (!parsed.success) return res.status(400).json({ error: 'Enter the username, role, and password.' })
@@ -256,6 +299,34 @@ app.post('/api/users', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) 
   const created = await prisma.user.create({ data: { user_name: user_name, role, password: passwordHash } })
 
   return res.status(201).json({ user_name: created.user_name, role: created.role })
+})
+
+app.put('/api/users/:user_name/:role', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const userName = normalizeUserName(String(req.params.user_name))
+  const role = String(req.params.role).toUpperCase()
+  if (role !== 'CA' && role !== 'FAC') return res.status(400).json({ error: 'Invalid user role.' })
+
+  const credential = await findUserByCredential(userName, role)
+  if (!credential) return res.status(404).json({ error: 'Credential not found.' })
+  if (req.session?.role === 'CA') {
+    if (role === 'CA') {
+      if (userName !== req.session.institute) return res.status(403).json({ error: 'College Admin can only edit their own credential.' })
+    } else {
+      const facultyRecord = await findFacultyByPan(userName)
+      if (!facultyRecord || facultyRecord.inst_short_name !== req.session.institute) {
+        return res.status(403).json({ error: 'College Admin can only edit faculty credentials from their institute.' })
+      }
+    }
+  }
+
+  const parsed = z.object({ password: z.string().trim().min(8) }).safeParse(req.body)
+  if (!parsed.success) return res.status(400).json({ error: 'Password must be at least 8 characters.' })
+  const passwordHash = await bcrypt.hash(parsed.data.password, 12)
+  await prisma.user.update({
+    where: { user_name_role: { user_name: credential.user_name, role: credential.role } },
+    data: { password: passwordHash },
+  })
+  return res.json({ user_name: credential.user_name, role: credential.role })
 })
 
 app.delete('/api/users/:user_name/:role', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
@@ -374,10 +445,7 @@ app.get('/api/faculty-subjects', auth, async (req: AuthedRequest, res) => {
 })
 app.post('/api/faculty-subjects', auth, allow('CE', 'CA', 'FAC'), async (req: AuthedRequest, res) => {
   const parsed = z.object({ PAN: z.string().trim().min(1).max(10), subject_code: z.string().trim().min(1).max(10) }).parse(req.body);
-  if (req.session?.role === 'FAC') {
-    const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
-    if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
-  } else if (req.session?.role === 'CA') {
+  if (req.session?.role === 'FAC' || req.session?.role === 'CA') {
     const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
     if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
   }
@@ -385,7 +453,7 @@ app.post('/api/faculty-subjects', auth, allow('CE', 'CA', 'FAC'), async (req: Au
   if (!facultyRow) return res.status(404).json({ error: 'Faculty not found' });
   const subject = await prisma.subject.findUnique({ where: { subject_code: parsed.subject_code } });
   if (!subject) return res.status(404).json({ error: 'Subject not found' });
-  if (req.session?.role === 'FAC') {
+  if (req.session?.role === 'FAC' || req.session?.role === 'CA') {
     const institute = req.session.institute
     if (!institute || facultyRow.inst_short_name !== institute) return res.status(403).json({ error: 'Faculty must belong to your institute' })
     const [directMapping, courseMapping] = await Promise.all([
@@ -407,12 +475,20 @@ app.post('/api/faculty-subjects', auth, allow('CE', 'CA', 'FAC'), async (req: Au
 app.delete('/api/faculty-subjects/:PAN/:subject_code', auth, allow('CE', 'CA', 'FAC'), async (req: AuthedRequest, res) => {
   const pan = String(req.params.PAN);
   const subjectCode = String(req.params.subject_code);
-  if (req.session?.role === 'FAC') {
+  if (req.session?.role === 'FAC' || req.session?.role === 'CA') {
     const facultyRow = await prisma.faculty.findUnique({ where: { PAN: pan } });
     if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
-  } else if (req.session?.role === 'CA') {
-    const facultyRow = await prisma.faculty.findUnique({ where: { PAN: pan } });
-    if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
+    const [directMapping, courseMapping] = await Promise.all([
+      prismaAny.instCourseSubject.findFirst({
+        where: { inst_short_name: req.session.institute, subject_code: subjectCode },
+        select: { subject_code: true },
+      }),
+      prisma.courseSubject.findFirst({
+        where: { subject_code: subjectCode, course: { institutes: { some: { inst_short_name: req.session.institute } } } },
+        select: { subject_code: true },
+      }),
+    ])
+    if (!directMapping && !courseMapping) return res.status(403).json({ error: 'Subject is not assigned to your institute' })
   }
   try { await prisma.facultySubject.delete({ where: { PAN_subject_code: { PAN: pan, subject_code: subjectCode } } }); return res.status(204).send(); }
   catch { return res.status(404).json({ error: 'Mapping not found' }); }
@@ -433,10 +509,7 @@ app.get('/api/faculty-specializations', auth, async (req: AuthedRequest, res) =>
 })
 app.post('/api/faculty-specializations', auth, allow('CE', 'CA', 'FAC'), async (req: AuthedRequest, res) => {
   const parsed = z.object({ PAN: z.string().trim().min(1).max(10), spec_id: z.coerce.number().int().min(1) }).parse(req.body);
-  if (req.session?.role === 'FAC') {
-    const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
-    if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
-  } else if (req.session?.role === 'CA') {
+  if (req.session?.role === 'FAC' || req.session?.role === 'CA') {
     const facultyRow = await prisma.faculty.findUnique({ where: { PAN: parsed.PAN } });
     if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
   }
@@ -444,7 +517,7 @@ app.post('/api/faculty-specializations', auth, allow('CE', 'CA', 'FAC'), async (
   if (!facultyRow) return res.status(404).json({ error: 'Faculty not found' });
   const specialization = await prisma.specialization.findUnique({ where: { spec_id: parsed.spec_id } });
   if (!specialization) return res.status(404).json({ error: 'Specialization not found' });
-  if (req.session?.role === 'FAC') {
+  if (req.session?.role === 'FAC' || req.session?.role === 'CA') {
     const institute = req.session.institute
     if (!institute || facultyRow.inst_short_name !== institute) return res.status(403).json({ error: 'Faculty must belong to your institute' })
     const instituteMapping = await prisma.instSpec.findUnique({
@@ -459,12 +532,13 @@ app.post('/api/faculty-specializations', auth, allow('CE', 'CA', 'FAC'), async (
 app.delete('/api/faculty-specializations/:PAN/:spec_id', auth, allow('CE', 'CA', 'FAC'), async (req: AuthedRequest, res) => {
   const pan = String(req.params.PAN);
   const specId = Number(req.params.spec_id);
-  if (req.session?.role === 'FAC') {
+  if (req.session?.role === 'FAC' || req.session?.role === 'CA') {
     const facultyRow = await prisma.faculty.findUnique({ where: { PAN: pan } });
     if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
-  } else if (req.session?.role === 'CA') {
-    const facultyRow = await prisma.faculty.findUnique({ where: { PAN: pan } });
-    if (!facultyRow || facultyRow.inst_short_name !== req.session.institute) return res.status(403).json({ error: 'Faculty must belong to your institute' });
+    const instituteMapping = await prisma.instSpec.findUnique({
+      where: { inst_short_name_spec_id: { inst_short_name: req.session.institute ?? '', spec_id: specId } },
+    })
+    if (!instituteMapping) return res.status(403).json({ error: 'Specialization is not assigned to your institute' })
   }
   try { await prisma.facultySpec.delete({ where: { PAN_spec_id: { PAN: pan, spec_id: specId } } }); return res.status(204).send(); }
   catch { return res.status(404).json({ error: 'Mapping not found' }); }
@@ -499,7 +573,9 @@ app.delete('/api/institutes/:inst_short_name', auth, allow('CE'), async (req: Au
         await tx.user.deleteMany({ where: { user_name: { in: facultyPanList }, role: 'FAC' } });
       }
       await tx.faculty.deleteMany({ where: { inst_short_name: instShortName } });
+      await tx.instCourseSubject.deleteMany({ where: { inst_short_name: instShortName } });
       await tx.instCourse.deleteMany({ where: { inst_short_name: instShortName } });
+      await tx.instSpec.deleteMany({ where: { inst_short_name: instShortName } });
       await tx.user.deleteMany({ where: { user_name: instShortName, role: 'CA' } });
       await tx.institute.delete({ where: { inst_short_name: instShortName } });
     })
@@ -527,20 +603,20 @@ app.get('/api/institutes', auth, async (req: AuthedRequest, res) => {
 app.post('/api/institutes', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
   const parsed = z.object({
     inst_short_name: z.string().trim().min(1).max(10),
-    inst_full_name: z.string().trim().max(100).optional(),
-    inst_Address1: z.string().trim().max(100).optional(),
-    inst_Address2: z.string().trim().max(100).optional(),
-    inst_District: z.string().trim().max(50).optional(),
-    inst_State: z.string().trim().max(50).optional(),
-    Landline_PhoneNo: z.string().trim().max(20).optional(),
-    Director_Name: z.string().trim().max(50).optional(),
-    Director_Desig: z.string().trim().max(25).optional(),
-    Director_Email: z.string().trim().email().max(50).optional(),
-    Director_MobileNo: z.string().trim().max(10).optional(),
-    ExamHead_Name: z.string().trim().max(50).optional(),
-    ExamHead_Desig: z.string().trim().max(25).optional(),
-    ExamHead_Email: z.string().trim().email().max(50).optional(),
-    ExamHead_MobileNo: z.string().trim().max(10).optional(),
+    inst_full_name: optionalInstituteText(100),
+    inst_Address1: optionalInstituteText(100),
+    inst_Address2: optionalInstituteText(100),
+    inst_District: optionalInstituteText(50),
+    inst_State: optionalInstituteText(50),
+    Landline_PhoneNo: optionalInstituteText(20),
+    Director_Name: optionalInstituteText(50),
+    Director_Desig: optionalInstituteText(25),
+    Director_Email: optionalEmailSchema,
+    Director_MobileNo: optionalInstituteText(10),
+    ExamHead_Name: optionalInstituteText(50),
+    ExamHead_Desig: optionalInstituteText(25),
+    ExamHead_Email: optionalEmailSchema,
+    ExamHead_MobileNo: optionalInstituteText(10),
   }).parse(req.body)
 
   if (req.session?.role === 'CA') {
@@ -564,20 +640,20 @@ app.put('/api/institutes/:inst_short_name', auth, allow('CE', 'CA'), async (req:
 
   const parsed = z.object({
     inst_short_name: z.string().trim().max(10).optional(),
-    inst_full_name: z.string().trim().max(100).optional(),
-    inst_Address1: z.string().trim().max(100).optional(),
-    inst_Address2: z.string().trim().max(100).optional(),
-    inst_District: z.string().trim().max(50).optional(),
-    inst_State: z.string().trim().max(50).optional(),
-    Landline_PhoneNo: z.string().trim().max(20).optional(),
-    Director_Name: z.string().trim().max(50).optional(),
-    Director_Desig: z.string().trim().max(25).optional(),
-    Director_Email: z.string().trim().email().max(50).optional(),
-    Director_MobileNo: z.string().trim().max(10).optional(),
-    ExamHead_Name: z.string().trim().max(50).optional(),
-    ExamHead_Desig: z.string().trim().max(25).optional(),
-    ExamHead_Email: z.string().trim().email().max(50).optional(),
-    ExamHead_MobileNo: z.string().trim().max(10).optional(),
+    inst_full_name: optionalInstituteText(100),
+    inst_Address1: optionalInstituteText(100),
+    inst_Address2: optionalInstituteText(100),
+    inst_District: optionalInstituteText(50),
+    inst_State: optionalInstituteText(50),
+    Landline_PhoneNo: optionalInstituteText(20),
+    Director_Name: optionalInstituteText(50),
+    Director_Desig: optionalInstituteText(25),
+    Director_Email: optionalEmailSchema,
+    Director_MobileNo: optionalInstituteText(10),
+    ExamHead_Name: optionalInstituteText(50),
+    ExamHead_Desig: optionalInstituteText(25),
+    ExamHead_Email: optionalEmailSchema,
+    ExamHead_MobileNo: optionalInstituteText(10),
   }).parse(req.body)
 
   const updateData = { ...parsed }
@@ -860,6 +936,27 @@ app.post('/api/inst-courses', auth, allow('CE', 'CA'), async (req: AuthedRequest
   return res.status(201).json(created)
 })
 
+app.put('/api/inst-courses/:inst_short_name/:course_code', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
+  const instShortName = normalizeUserName(String(req.params.inst_short_name))
+  const courseCode = String(req.params.course_code).trim().toUpperCase()
+  if (!ensureInstituteAccess(req, instShortName)) {
+    return res.status(403).json({ error: 'College Admin can only update mappings for their institute' })
+  }
+  const parsed = z.object({
+    intake: z.number().int().min(0).nullable().optional(),
+    strength: z.number().int().min(0).nullable().optional(),
+  }).refine(values => values.intake !== undefined || values.strength !== undefined).parse(req.body)
+  const existing = await prisma.instCourse.findUnique({
+    where: { inst_short_name_course_code: { inst_short_name: instShortName, course_code: courseCode } },
+  })
+  if (!existing) return res.status(404).json({ error: 'Institute-course mapping not found' })
+  const updated = await prisma.instCourse.update({
+    where: { inst_short_name_course_code: { inst_short_name: instShortName, course_code: courseCode } },
+    data: parsed,
+  })
+  return res.json(updated)
+})
+
 app.delete('/api/inst-courses/:inst_short_name/:course_code', auth, allow('CE', 'CA'), async (req: AuthedRequest, res) => {
   const instShortName = normalizeUserName(String(req.params.inst_short_name))
   const courseCode = String(req.params.course_code).trim().toUpperCase()
@@ -1057,13 +1154,72 @@ app.get('/api/search', auth, async (req: AuthedRequest, res) => {
     const subjectWhere = { OR: [{ subject_code: { contains: q } }, { subject_short_name: { contains: q } }, { subject_full_name: { contains: q } }] }
     const facultyWhereBase = { OR: [{ PAN: { contains: q } }, { faculty_name: { contains: q } }, { faculty_desig: { contains: q } }, { faculty_Email: { contains: q } }] }
 
-    const institutes = await prisma.institute.findMany({ where: { OR: [{ inst_short_name: { contains: q } }, { inst_full_name: { contains: q } }] }, take: 50 })
-    const courses = await prisma.course.findMany({ where: courseWhere, take: 50 })
-    const subjects = await prisma.subject.findMany({ where: subjectWhere, take: 50 })
+    const isInstituteScopedRole = req.session?.role === 'CA' || req.session?.role === 'FAC'
+    const institute = isInstituteScopedRole && req.session?.institute
+      ? await prisma.institute.findUnique({ where: { inst_short_name: req.session.institute } })
+      : null
+    let instituteCourseCodes: string[] | undefined
+    let instituteSubjectCodes: string[] | undefined
 
-    // Faculty must be scoped for CA/FAC
+    if (isInstituteScopedRole) {
+      if (!req.session?.institute || !institute) {
+        return res.json({ institutes: [], courses: [], subjects: [], faculty: [] })
+      }
+
+      const [instituteCourses, directAssociations] = await Promise.all([
+        prisma.instCourse.findMany({
+          where: { inst_short_name: req.session.institute },
+          select: { course_code: true },
+        }),
+        prismaAny.instCourseSubject.findMany({
+          where: { inst_short_name: req.session.institute },
+          select: { course_code: true, subject_code: true },
+        }),
+      ])
+      instituteCourseCodes = Array.from(new Set([
+        ...instituteCourses.map(row => row.course_code),
+        ...directAssociations.map((row: { course_code: string }) => row.course_code),
+      ]))
+      const courseSubjectRows = instituteCourseCodes.length > 0
+        ? await prisma.courseSubject.findMany({
+            where: { course_code: { in: instituteCourseCodes } },
+            select: { subject_code: true },
+          })
+        : []
+      instituteSubjectCodes = Array.from(new Set([
+        ...directAssociations.map((row: { subject_code: string }) => row.subject_code),
+        ...courseSubjectRows.map(row => row.subject_code),
+      ]))
+    }
+
+    const institutes = isInstituteScopedRole
+      ? (institute && (
+          institute.inst_short_name.toLowerCase().includes(q.toLowerCase()) ||
+          (institute.inst_full_name ?? '').toLowerCase().includes(q.toLowerCase())
+        ) ? [institute] : [])
+      : await prisma.institute.findMany({ where: { OR: [{ inst_short_name: { contains: q } }, { inst_full_name: { contains: q } }] }, take: 50 })
+    const courses = await prisma.course.findMany({
+      where: {
+        AND: [
+          courseWhere,
+          ...(instituteCourseCodes ? [{ course_code: { in: instituteCourseCodes } }] : []),
+        ],
+      },
+      take: 50,
+    })
+    const subjects = await prisma.subject.findMany({
+      where: {
+        AND: [
+          subjectWhere,
+          ...(instituteSubjectCodes ? [{ subject_code: { in: instituteSubjectCodes } }] : []),
+        ],
+      },
+      take: 50,
+    })
+
+    // Faculty search results are always restricted to the signed-in institute for CA/FAC.
     const facultyWhere: any = { AND: [facultyWhereBase] }
-    if (req.session?.role === 'CA' || req.session?.role === 'FAC') facultyWhere.AND.push({ inst_short_name: req.session?.institute })
+    if (isInstituteScopedRole) facultyWhere.AND.push({ inst_short_name: req.session?.institute })
     const faculty = await prisma.faculty.findMany({ where: facultyWhere, take: 200 })
 
     return res.json({ institutes, courses, subjects, faculty })

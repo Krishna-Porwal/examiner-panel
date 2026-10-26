@@ -220,11 +220,11 @@ export default function InstituteProfileForm({ institute, onSave, onCancel, isEd
             </div>
           </div>
 
-          {/* SECTION 3: Programme Coordinator */}
+          {/* SECTION 3: Exam Head/Institute Coordinator Profile */}
           <div className="rounded-lg border border-slate-200 bg-gradient-to-br from-green-50 to-transparent p-6">
             <h3 className="mb-4 flex items-center text-lg font-semibold text-green-900">
               <div className="mr-3 flex h-8 w-8 items-center justify-center rounded-full bg-green-600 text-white text-sm font-bold">3</div>
-              Programme Coordinator (Exam Head)
+              Exam Head/Institute Coordinator Profile
             </h3>
 
             <div className="grid gap-4 md:grid-cols-2">
