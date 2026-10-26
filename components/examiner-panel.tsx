@@ -21,6 +21,7 @@ type Specialization = { spec_id: number; spec_name?: string }
 type FacultySubjectMap = { PAN: string; subject_code: string; entered_by?: string; entered_on?: string }
 type FacultySpecMap = { PAN: string; spec_id: number; entered_by?: string; entered_on?: string }
 type InstCourseMap = { inst_short_name: string; course_code: string; intake?: number; strength?: number }
+type InstSpecMap = { inst_short_name: string; spec_id: number }
 type CourseSubjectMap = { course_code: string; subject_code: string; study_year?: number | null; semester?: number | null; inst_short_names?: string[] }
 
 type UserPayload = { user_name: string; password: string; role: 'CA' | 'FAC' }
@@ -334,7 +335,10 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
   const [facultySubjects, setFacultySubjects] = useState<FacultySubjectMap[]>([])
   const [facultySpecs, setFacultySpecs] = useState<FacultySpecMap[]>([])
   const [instCourseMappings, setInstCourseMappings] = useState<InstCourseMap[]>([])
+  const [instSpecMappings, setInstSpecMappings] = useState<InstSpecMap[]>([])
   const [courseSubjectMappings, setCourseSubjectMappings] = useState<CourseSubjectMap[]>([])
+  const [selectedMappingInstitute, setSelectedMappingInstitute] = useState('')
+  const [selectedMappingSpecialization, setSelectedMappingSpecialization] = useState('')
   const [showMappingModal, setShowMappingModal] = useState(false)
   const [editingMapping, setEditingMapping] = useState<CourseSubjectMap | null>(null)
   const [mappingForm, setMappingForm] = useState({
@@ -417,6 +421,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       const facultySubjectRows = await request('/api/faculty-subjects').catch(() => [])
       const facultySpecRows = await request('/api/faculty-specializations').catch(() => [])
       const instCourseRows = session?.role !== 'FAC' ? await request('/api/inst-courses').catch(() => []) : []
+      const instSpecRows = session?.role !== 'FAC' ? await request('/api/inst-specializations').catch(() => []) : []
       const courseSubjectRows = session?.role !== 'FAC' ? await request('/api/course-subjects').catch(() => []) : []
       const userRows = session ? await request('/api/users').catch(() => []) : []
       setFaculty(Array.isArray(facultyRows) ? facultyRows : [])
@@ -427,6 +432,7 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       setFacultySubjects(Array.isArray(facultySubjectRows) ? facultySubjectRows : [])
       setFacultySpecs(Array.isArray(facultySpecRows) ? facultySpecRows : [])
       setInstCourseMappings(Array.isArray(instCourseRows) ? instCourseRows : [])
+      setInstSpecMappings(Array.isArray(instSpecRows) ? instSpecRows : [])
       setCourseSubjectMappings(Array.isArray(courseSubjectRows) ? courseSubjectRows : [])
       setUsers(Array.isArray(userRows) ? userRows : [])
       if (session?.role === 'CA' && institutes.length === 0 && instituteRows?.length) {
@@ -510,13 +516,13 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
 
   const collegeSpecializations = useMemo(() => {
     if (session?.role !== 'CA' || !session.institute) return [] as Specialization[]
-    const allowedSubjectCodes = new Set(
-      courseSubjectMappings
-        .filter(item => Array.isArray(item.inst_short_names) && item.inst_short_names.includes(session.institute ?? ''))
-        .map(item => item.subject_code)
+    const mappedSpecIds = new Set(
+      instSpecMappings
+        .filter(mapping => mapping.inst_short_name === session.institute)
+        .map(mapping => mapping.spec_id)
     )
-    return specializations.filter((spec: Specialization) => subjects.some((subject: Subject) => subject.spec_id === spec.spec_id && allowedSubjectCodes.has(subject.subject_code)))
-  }, [courseSubjectMappings, session, specializations, subjects])
+    return specializations.filter(spec => mappedSpecIds.has(spec.spec_id))
+  }, [instSpecMappings, session, specializations])
 
   const visibleSpecializations = useMemo(() => {
     const scoped = session?.role === 'CA'
@@ -762,6 +768,34 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     }
   }
 
+  async function addInstituteSpecialization(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault()
+    if (session?.role !== 'CE') {
+      setError('Only Programme Coordinators can map specializations to colleges.')
+      return
+    }
+
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      const saved = await request('/api/inst-specializations', {
+        method: 'POST',
+        body: JSON.stringify({
+          inst_short_name: selectedMappingInstitute,
+          spec_id: Number(selectedMappingSpecialization),
+        }),
+      })
+      setInstSpecMappings(rows => [...rows, saved])
+      setSelectedMappingSpecialization('')
+      setNotice('College-specialization mapping added successfully.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to add college-specialization mapping')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   async function saveSubject(e: FormEvent<HTMLFormElement>) {
     e.preventDefault()
     setBusy(true)
@@ -815,6 +849,21 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       await loadData()
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Unable to delete specialization')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function deleteInstituteSpecialization(mapping: InstSpecMap) {
+    setBusy(true)
+    setError('')
+    setNotice('')
+    try {
+      await request(`/api/inst-specializations/${encodeURIComponent(mapping.inst_short_name)}/${encodeURIComponent(String(mapping.spec_id))}`, { method: 'DELETE' })
+      setInstSpecMappings(rows => rows.filter(row => row.inst_short_name !== mapping.inst_short_name || row.spec_id !== mapping.spec_id))
+      setNotice('College-specialization mapping deleted.')
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unable to delete college-specialization mapping')
     } finally {
       setBusy(false)
     }
@@ -1839,31 +1888,78 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
               )}
 
               {active === 'Specializations' && (
-                <div className="rounded-lg border bg-card p-4 text-foreground">
-                  <div className="mb-4 flex items-center justify-between gap-2">
-                    <div>
-                      <h2 className="text-2xl font-semibold">Specializations</h2>
-                      <p className="text-sm text-muted-foreground">Institute: {session.institute || 'All'}</p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm" onClick={() => downloadCsv('specializations.csv', ['spec_id', 'spec_name'], visibleSpecializations)}>Download CSV</Button>
-                      <input id="upload-specializations-ce" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importSpecializationsCsv)} className="hidden" />
-                      <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-specializations-ce')?.click()}>Upload CSV</Button>
-                      <Button size="sm" onClick={() => setEditingSpec({ spec_id: 0, spec_name: '' })}>Add</Button>
-                    </div>
-                  </div>
-                  <div className="mb-4 flex gap-2">
-                    <input value={specializationSearch} onChange={e => setSpecializationSearch(e.target.value)} placeholder="Search specialization..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                  </div>
-                  <div className="space-y-2">
-                    {visibleSpecializations.length === 0 ? <p className="text-sm text-muted-foreground">No specialization records found.</p> : visibleSpecializations.map(item => (
-                      <div key={item.spec_id} className="flex items-center justify-between rounded border p-3">
-                        <div><div className="font-medium">{item.spec_name || `Spec ${item.spec_id}`}</div><div className="text-sm text-muted-foreground">Spec ID: {item.spec_id}</div></div>
-                        <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setSelectedSpec(item)}>View</Button><Button size="sm" variant="outline" onClick={() => setEditingSpec(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSpecialization(item.spec_id)}>Delete</Button></div>
+                <>
+                  <div className="rounded-lg border bg-card p-4 text-foreground">
+                    <div className="mb-4 flex items-center justify-between gap-2">
+                      <div>
+                        <h2 className="text-2xl font-semibold">Specializations</h2>
+                        <p className="text-sm text-muted-foreground">Institute: {session.institute || 'All'}</p>
                       </div>
-                    ))}
+                      <div className="flex gap-2">
+                        <Button variant="outline" size="sm" onClick={() => downloadCsv('specializations.csv', ['spec_id', 'spec_name'], visibleSpecializations)}>Download CSV</Button>
+                        <input id="upload-specializations-ce" type="file" accept=".csv" onChange={e => importFromCsvFile(e, importSpecializationsCsv)} className="hidden" />
+                        <Button variant="outline" size="sm" onClick={() => document.getElementById('upload-specializations-ce')?.click()}>Upload CSV</Button>
+                        <Button size="sm" onClick={() => setEditingSpec({ spec_id: 0, spec_name: '' })}>Add</Button>
+                      </div>
+                    </div>
+                    <div className="mb-4 flex gap-2">
+                      <input value={specializationSearch} onChange={e => setSpecializationSearch(e.target.value)} placeholder="Search specialization..." className="flex-1 rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
+                    </div>
+                    <div className="space-y-2">
+                      {visibleSpecializations.length === 0 ? <p className="text-sm text-muted-foreground">No specialization records found.</p> : visibleSpecializations.map(item => (
+                        <div key={item.spec_id} className="flex items-center justify-between rounded border p-3">
+                          <div><div className="font-medium">{item.spec_name || `Spec ${item.spec_id}`}</div><div className="text-sm text-muted-foreground">Spec ID: {item.spec_id}</div></div>
+                          <div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setSelectedSpec(item)}>View</Button><Button size="sm" variant="outline" onClick={() => setEditingSpec(item)}>Edit</Button><Button size="sm" variant="outline" className="text-red-600" onClick={() => deleteSpecialization(item.spec_id)}>Delete</Button></div>
+                        </div>
+                      ))}
+                    </div>
                   </div>
-                </div>
+
+                  {isCentralExaminer && (
+                    <div className="mt-4 rounded-lg border bg-card p-4 text-foreground">
+                      <div className="mb-4">
+                        <h2 className="text-xl font-semibold">College Specialization Mapping</h2>
+                        <p className="text-sm text-muted-foreground">Assign a specialization to a college.</p>
+                      </div>
+                      <form onSubmit={addInstituteSpecialization} className="mb-4 grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+                        <label className="block">
+                          <span className="text-sm font-medium">College</span>
+                          <select value={selectedMappingInstitute} onChange={e => { setSelectedMappingInstitute(e.target.value); setSelectedMappingSpecialization('') }} required disabled={busy} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                            <option value="">Select college</option>
+                            {institutes.map(item => <option key={item.inst_short_name} value={item.inst_short_name}>{item.inst_short_name} — {item.inst_full_name || 'College'}</option>)}
+                          </select>
+                        </label>
+                        <label className="block">
+                          <span className="text-sm font-medium">Specialization</span>
+                          <select value={selectedMappingSpecialization} onChange={e => setSelectedMappingSpecialization(e.target.value)} required disabled={busy || !selectedMappingInstitute} className="mt-1 w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground">
+                            <option value="">Select specialization</option>
+                            {specializations
+                              .filter(item => !instSpecMappings.some(mapping => mapping.inst_short_name === selectedMappingInstitute && mapping.spec_id === item.spec_id))
+                              .map(item => <option key={item.spec_id} value={String(item.spec_id)}>{item.spec_name || `Spec ${item.spec_id}`}</option>)}
+                          </select>
+                        </label>
+                        <div className="flex items-end">
+                          <Button type="submit" disabled={busy || !selectedMappingInstitute || !selectedMappingSpecialization}>Add Mapping</Button>
+                        </div>
+                      </form>
+                      <div className="space-y-2">
+                        {instSpecMappings.length === 0 ? <p className="text-sm text-muted-foreground">No college-specialization mappings found.</p> : instSpecMappings.map(mapping => {
+                          const institute = institutes.find(item => item.inst_short_name === mapping.inst_short_name)
+                          const specialization = specializations.find(item => item.spec_id === mapping.spec_id)
+                          return (
+                            <div key={`${mapping.inst_short_name}-${mapping.spec_id}`} className="flex items-center justify-between rounded border p-3">
+                              <div>
+                                <div className="font-medium">{institute?.inst_full_name || mapping.inst_short_name}</div>
+                                <div className="text-sm text-muted-foreground">{mapping.inst_short_name} • {specialization?.spec_name || `Spec ${mapping.spec_id}`}</div>
+                              </div>
+                              <Button type="button" size="sm" variant="outline" className="text-red-600" disabled={busy} onClick={() => deleteInstituteSpecialization(mapping)}>Remove</Button>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </>
               )}
 
               {active === 'Subjects' && (
