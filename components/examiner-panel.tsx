@@ -34,6 +34,10 @@ function normalizeUserName(value: string) {
   return value.trim().replace(/\s+/g, '').toUpperCase()
 }
 
+function normalizeInstituteLabel(value: string) {
+  return value.trim().toLowerCase().replace(/[^a-z0-9]/g, '')
+}
+
 function normalizeCredentialRole(value: string | undefined): 'CA' | 'FAC' | 'ALL' {
   const normalized = String(value ?? '').trim().toLowerCase()
   if (['ca', 'college admin', 'clg admin', 'college-admin', 'college_admin', 'institute admin'].includes(normalized)) return 'CA'
@@ -925,6 +929,26 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
     return visibleInstitutes.filter(i => !existingCaCredentials.has((i.inst_short_name ?? '').toUpperCase()))
   }, [visibleInstitutes, users])
 
+  const matchingCredentialInstitutes = useMemo(() => {
+    const queryText = normalizeSearchValue(caCredential.user_name)
+    if (!queryText) return []
+    return availableInstitutesForCredential
+      .filter(institute =>
+        normalizeSearchValue(institute.inst_short_name).includes(queryText) ||
+        normalizeSearchValue(institute.inst_full_name ?? '').includes(queryText),
+      )
+      .slice(0, 8)
+  }, [availableInstitutesForCredential, caCredential.user_name])
+
+  const credentialInstituteMatch = useMemo(() => {
+    const queryText = normalizeInstituteLabel(caCredential.user_name)
+    if (!queryText) return undefined
+    return institutes.find(institute =>
+      normalizeInstituteLabel(institute.inst_short_name) === queryText ||
+      normalizeInstituteLabel(institute.inst_full_name ?? '') === queryText,
+    )
+  }, [institutes, caCredential.user_name])
+
   const mySubjects = facultySubjects.filter(item => item.PAN === session?.user_name)
   const mySpecializations = facultySpecs.filter(item => item.PAN === session?.user_name)
   const ownInstituteFaculty = faculty.filter(row => row.inst_short_name === session?.institute)
@@ -1579,7 +1603,6 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
       let normalizedUserName = normalizeUserName(payload.user_name)
       let facultyInstitute: string | undefined
       if (type === 'CA') {
-        const normalizeInstituteLabel = (value: string) => normalizeSearchValue(value).replace(/[^a-z0-9]/g, '')
         const typedInstituteName = normalizeInstituteLabel(payload.user_name)
         const institute = institutes.find(item =>
           normalizeInstituteLabel(item.inst_short_name) === typedInstituteName ||
@@ -2880,22 +2903,45 @@ export default function ExaminerPanel({ token, user, onLogout }: ExaminerPanelPr
                     <div className="mt-4 grid gap-4 lg:grid-cols-2">
                       <div className="space-y-3 rounded border p-4">
                         <h3 className="font-semibold">College Admin Credential</h3>
-                        <input
-                          list="ce-credential-institute-options"
-                          value={caCredential.user_name}
-                          onChange={e => setCaCredential(prev => ({ ...prev, user_name: e.target.value }))}
-                          autoComplete="organization"
-                          placeholder="Select or type institute code or name"
-                          disabled={busy}
-                          className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground"
-                        />
-                        <datalist id="ce-credential-institute-options">
-                          {availableInstitutesForCredential.map(item => (
-                            <option key={item.inst_short_name} value={item.inst_short_name}>{item.inst_full_name || 'Institute'}</option>
-                          ))}
-                        </datalist>
+                        <div className="space-y-2">
+                          <input
+                            value={caCredential.user_name}
+                            onChange={e => setCaCredential(prev => ({ ...prev, user_name: e.target.value }))}
+                            autoComplete="organization"
+                            placeholder="Search or type institute name/code"
+                            disabled={busy}
+                            aria-label="Search or type institute name or code"
+                            className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground"
+                          />
+                          {matchingCredentialInstitutes.length > 0 && (
+                            <div className="max-h-48 overflow-y-auto rounded border bg-background p-1" aria-label="Matching institutes">
+                              {matchingCredentialInstitutes.map(item => (
+                                <button
+                                  key={item.inst_short_name}
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => setCaCredential(prev => ({ ...prev, user_name: item.inst_short_name }))}
+                                  className="flex w-full items-start justify-between gap-3 rounded px-3 py-2 text-left text-sm hover:bg-muted disabled:opacity-50"
+                                >
+                                  <span className="font-medium">{item.inst_short_name}</span>
+                                  <span className="text-right text-muted-foreground">{item.inst_full_name || 'Institute'}</span>
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                        {!credentialInstituteMatch && caCredential.user_name.trim() && (
+                          <p className="text-xs text-amber-700">
+                            Choose a suggestion or enter the exact registered institute code or full name.
+                          </p>
+                        )}
+                        {credentialInstituteMatch && (
+                          <p className="text-xs text-muted-foreground">
+                            College Admin username: {credentialInstituteMatch.inst_short_name}
+                          </p>
+                        )}
                         <input value={caCredential.password} onChange={e => setCaCredential(prev => ({ ...prev, password: e.target.value }))} type="password" minLength={8} autoComplete="new-password" placeholder="Password (at least 8 characters)" disabled={busy} className="w-full rounded border border-input bg-background px-2 py-2 text-sm text-foreground placeholder:text-muted-foreground" />
-                        <Button type="button" disabled={busy || !caCredential.user_name.trim() || caCredential.password.length < 8} onClick={() => saveCredential('CA', caCredential)}>Create College Admin Credential</Button>
+                        <Button type="button" disabled={busy || !credentialInstituteMatch || caCredential.password.length < 8} onClick={() => saveCredential('CA', { ...caCredential, user_name: credentialInstituteMatch?.inst_short_name ?? '' })}>Create College Admin Credential</Button>
                       </div>
 
                       <div className="space-y-3 rounded border p-4">
